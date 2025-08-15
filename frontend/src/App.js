@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { DataGrid } from "@mui/x-data-grid";
 import Box from "@mui/material/Box";
 import TextField from "@mui/material/TextField";
@@ -34,6 +34,7 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
+import MenuItem from '@mui/material/MenuItem';
 
 // Evidence Modal Component
 const EvidenceModal = ({ open, onClose, evidenceData, loading, error }) => {
@@ -90,8 +91,18 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error }) => {
 
         {evidenceData && !loading && (
           <Box>
+            {/* Company Info */}
+            <Box sx={{ mb: 3, p: 2, bgcolor: '#f8f9fa', borderRadius: 2 }}>
+              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 1, color: '#1e6641' }}>
+                معلومات الشركة
+              </Typography>
+              <Typography><strong>الرمز:</strong> {evidenceData.company_symbol}</Typography>
+              <Typography><strong>اسم الشركة:</strong> {evidenceData.company_name}</Typography>
+              {evidenceData.year && <Typography><strong>السنة:</strong> {evidenceData.year}</Typography>}
+            </Box>
+
             {/* Screenshot */}
-            {evidenceData.screenshot_url && (
+            {evidenceData.evidence && evidenceData.evidence.has_evidence && (
               <Box sx={{ mb: 3 }}>
                 <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: '#1e6641' }}>
                   لقطة شاشة من المستند
@@ -105,14 +116,33 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error }) => {
                   bgcolor: '#fafafa'
                 }}>
                   <img 
-                    src={`http://localhost:5002${evidenceData.screenshot_url}`} 
+                    src={`http://localhost:5002/api/evidence/${evidenceData.company_symbol}.png`} 
                     alt="Evidence Screenshot"
                     style={{ 
                       maxWidth: '100%', 
-                      maxHeight: '400px',
+                      maxHeight: '600px',
                       objectFit: 'contain'
                     }}
                   />
+                </Box>
+              </Box>
+            )}
+
+            {/* Extraction Details */}
+            {evidenceData.numeric_value && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: '#1e6641' }}>
+                  تفاصيل الاستخراج
+                </Typography>
+                <Box sx={{ 
+                  p: 2, 
+                  bgcolor: '#f8f9fa', 
+                  borderRadius: 2,
+                  border: '1px solid #e0e0e0'
+                }}>
+                  <Typography><strong>القيمة المستخرجة:</strong> {evidenceData.numeric_value?.toLocaleString('en-US')} SAR</Typography>
+                  {evidenceData.pdf_filename && <Typography><strong>اسم الملف:</strong> {evidenceData.pdf_filename}</Typography>}
+                  {evidenceData.extraction_method && <Typography><strong>طريقة الاستخراج:</strong> {evidenceData.extraction_method}</Typography>}
                 </Box>
               </Box>
             )}
@@ -212,15 +242,15 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error }) => {
   );
 };
 
-const columns = [
+const getColumns = (quarterFilter) => [
   { field: "symbol", headerName: "رمز الشركة", width: 150, align: "right", headerAlign: "right" },
   { field: "company_name", headerName: "الشركة", width: 250, align: "right", headerAlign: "right" },
   { field: "foreign_ownership", headerName: "ملكية جميع المستثمرين الأجانب", width: 280, align: "right", headerAlign: "right" },
   { field: "max_allowed", headerName: "الملكية الحالية", width: 200, align: "right", headerAlign: "right" },
   { field: "investor_limit", headerName: "ملكية المستثمر الاستراتيجي الأجنبي", width: 280, align: "right", headerAlign: "right" },
   { 
-    field: "retained_earnings", 
-    headerName: "الأرباح المبقاة", 
+    field: "previous_quarter_value", 
+    headerName: `الأرباح المبقاة للربع السابق (${quarterFilter === "Q1" ? "2024Q4" : quarterFilter === "Q2" ? "2025Q1" : quarterFilter === "Q3" ? "2025Q2" : quarterFilter === "Q4" ? "2025Q3" : "2024Q4"})`, 
     width: 300, 
     align: "right", 
     headerAlign: "right",
@@ -254,8 +284,8 @@ const columns = [
     }
   },
   { 
-    field: "reinvested_earnings", 
-    headerName: "الأرباح المعاد استثمارها", 
+    field: "current_quarter_value", 
+    headerName: `الأرباح المبقاة للربع الحالي (${quarterFilter === "Q1" ? "2025Q1" : quarterFilter === "Q2" ? "2025Q2" : quarterFilter === "Q3" ? "2025Q3" : quarterFilter === "Q4" ? "2025Q4" : "2025Q1"})`, 
     width: 300, 
     align: "right", 
     headerAlign: "right",
@@ -266,7 +296,67 @@ const columns = [
       }
       const numValue = parseFloat(value);
       if (!isNaN(numValue)) {
-        return numValue.toLocaleString('en-US'); // English numerals
+        return (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography>{numValue.toLocaleString('en-US')}</Typography>
+            <IconButton 
+              size="small" 
+              onClick={(e) => {
+                e.stopPropagation();
+                params.row.onEvidenceClick && params.row.onEvidenceClick(params.row);
+              }}
+              sx={{ 
+                color: '#1e6641',
+                '&:hover': { bgcolor: '#e8f5ee' }
+              }}
+            >
+              <VisibilityIcon fontSize="small" />
+            </IconButton>
+          </Box>
+        );
+      }
+      return value;
+    }
+  },
+  { 
+    field: "flow", 
+    headerName: "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)", 
+    width: 350, 
+    align: "right", 
+    headerAlign: "right",
+    renderCell: (params) => {
+      const value = params.value;
+      if (!value || value === "" || value === "null" || value === "undefined") {
+        return "لايوجد";
+      }
+      const numValue = parseFloat(value);
+      if (!isNaN(numValue)) {
+        const isPositive = numValue >= 0;
+        const color = isPositive ? '#2e7d32' : '#d32f2f';
+        const sign = isPositive ? '+' : '';
+        return (
+          <Typography sx={{ color, fontWeight: 'bold' }}>
+            {sign}{numValue.toLocaleString('en-US')} SAR
+          </Typography>
+        );
+      }
+      return value;
+    }
+  },
+  { 
+    field: "foreign_investor_flow", 
+    headerName: "تدفق الأرباح المبقاة للمستثمر الأجنبي", 
+    width: 350, 
+    align: "right", 
+    headerAlign: "right",
+    renderCell: (params) => {
+      const value = params.value;
+      if (!value || value === "" || value === "null" || value === "undefined") {
+        return "لايوجد";
+      }
+      const numValue = parseFloat(value);
+      if (!isNaN(numValue)) {
+        return numValue.toLocaleString('en-US');
       }
       return value;
     }
@@ -276,6 +366,7 @@ const columns = [
 function App() {
   const [rows, setRows] = useState([]);
   const [search, setSearch] = useState("");
+  const [quarterFilter, setQuarterFilter] = useState("Q1"); // Default to Q1 instead of "all"
   const [loading, setLoading] = useState(false);
   const [evidenceModalOpen, setEvidenceModalOpen] = useState(false);
   const [evidenceData, setEvidenceData] = useState(null);
@@ -298,7 +389,8 @@ function App() {
     setEvidenceError(null);
     
     try {
-      const response = await fetch(`http://localhost:5002/api/evidence/${companySymbol}`);
+      // First fetch the extraction metadata for the company
+      const response = await fetch(`http://localhost:5002/api/extractions/${companySymbol}`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -314,7 +406,7 @@ function App() {
 
   // Function to handle evidence button click
   const handleEvidenceClick = (row) => {
-    if (row.retained_earnings && row.retained_earnings !== "لايوجد") {
+    if (row.current_quarter_value && row.current_quarter_value !== "لايوجد") {
       setEvidenceModalOpen(true);
       fetchEvidence(row.symbol);
     }
@@ -399,8 +491,8 @@ function App() {
         return [];
       });
 
-    // Load reinvested earnings data (CSV) from backend API
-    const loadReinvestedEarnings = fetch("http://localhost:5002/api/reinvested_earnings_results.csv")
+    // Load quarterly flow data (CSV) from backend API
+    const loadQuarterlyFlowData = fetch("http://localhost:5002/api/retained_earnings_flow.csv")
       .then((res) => {
         if (!res.ok) {
           throw new Error(`HTTP error! status: ${res.status}`);
@@ -440,67 +532,98 @@ function App() {
         });
       })
       .catch((error) => {
-        console.error("Error loading reinvested earnings data:", error);
+        console.error("Error loading quarterly flow data:", error);
         return [];
       });
 
     // Combine both datasets
-    Promise.all([loadForeignOwnership, loadReinvestedEarnings])
-      .then(([foreignOwnershipData, reinvestedEarningsData]) => {
+    Promise.all([loadForeignOwnership, loadQuarterlyFlowData])
+      .then(([foreignOwnershipData, quarterlyFlowData]) => {
         console.log("Foreign ownership data count:", foreignOwnershipData.length);
-        console.log("Reinvested earnings data count:", reinvestedEarningsData.length);
+        console.log("Quarterly flow data count:", quarterlyFlowData.length);
         
-        // Create a map of reinvested earnings data by symbol
-        const earningsMap = {};
+        // Create a map of quarterly flow data by symbol and quarter
+        const flowMap = {};
         
-        reinvestedEarningsData.forEach(row => {
+        quarterlyFlowData.forEach(row => {
           const symbol = row.company_symbol ? row.company_symbol.toString().trim() : "";
-          if (symbol) {
-            earningsMap[symbol] = {
-              retained_earnings: row.retained_earnings || "",
-              reinvested_earnings: row.reinvested_earnings || "",
+          const quarter = row.quarter ? row.quarter.toString().trim() : "";
+          if (symbol && quarter) {
+            if (!flowMap[symbol]) {
+              flowMap[symbol] = {};
+            }
+            flowMap[symbol][quarter] = {
+              previous_value: row.previous_value || "",
+              current_value: row.current_value || "",
+              flow: row.flow || "",
+              flow_formula: row.flow_formula || "",
               year: row.year || "",
-              error: row.error || ""
+              foreign_investor_flow: row.reinvested_earnings_flow || ""
             };
-            console.log(`Mapped earnings for ${symbol}:`, earningsMap[symbol]);
+            console.log(`Mapped flow data for ${symbol} ${quarter}:`, flowMap[symbol][quarter]);
           }
         });
 
-        console.log("Earnings map keys:", Object.keys(earningsMap));
-        console.log("Sample earnings data for 2010:", earningsMap["2010"]);
-        console.log("Sample earnings data for 1050:", earningsMap["1050"]);
+        console.log("Flow map keys:", Object.keys(flowMap));
+        console.log("Sample flow data for 2222:", flowMap["2222"]);
 
-        // Merge the data
-        const mergedData = foreignOwnershipData.map((row, idx) => {
+        // Merge the data - create a row for each available quarter
+        const mergedData = [];
+        
+        foreignOwnershipData.forEach((row, idx) => {
           const symbol = row.symbol ? row.symbol.toString().trim() : "";
-          const earningsData = earningsMap[symbol] || {};
-          const hasEarningsData = symbol in earningsMap;
+          const flowData = flowMap[symbol] || {};
+          const hasFlowData = symbol in flowMap;
           
-          if (hasEarningsData) {
-            console.log(`Found earnings data for ${symbol}:`, earningsData);
-          }
-          
-          const mergedRow = {
-            ...row,
-            retained_earnings: earningsData.retained_earnings || "",
-            reinvested_earnings: earningsData.reinvested_earnings || "",
-            year: earningsData.year || "",
-            error: earningsData.error || "",
-            id: symbol + idx,
-            onEvidenceClick: handleEvidenceClick, // Add the evidence click handler
-          };
-          
-          // Debug: Log first few rows to see the data structure
-          if (idx < 5 || symbol === "2010") {
-            console.log(`Row ${idx} (${symbol}):`, {
-              symbol: mergedRow.symbol,
-              company_name: mergedRow.company_name,
-              retained_earnings: mergedRow.retained_earnings,
-              reinvested_earnings: mergedRow.reinvested_earnings
+          if (hasFlowData) {
+            console.log(`Found flow data for ${symbol}:`, flowData);
+            
+            // Create a row for each available quarter
+            Object.keys(flowData).forEach(quarter => {
+              const quarterData = flowData[quarter] || {};
+              
+              const mergedRow = {
+                ...row,
+                previous_quarter_value: quarterData.previous_value || "",
+                current_quarter_value: quarterData.current_value || "",
+                flow: quarterData.flow || "",
+                flow_formula: quarterData.flow_formula || "",
+                year: quarterData.year || "",
+                foreign_investor_flow: quarterData.foreign_investor_flow || "",
+                quarter: quarter,
+                id: symbol + "_" + quarter + "_" + idx,
+                onEvidenceClick: handleEvidenceClick, // Add the evidence click handler
+              };
+              
+              // Debug: Log first few rows to see the data structure
+              if (mergedData.length < 5 || symbol === "2222") {
+                console.log(`Row ${mergedData.length} (${symbol} ${quarter}):`, {
+                  symbol: mergedRow.symbol,
+                  company_name: mergedRow.company_name,
+                  quarter: mergedRow.quarter,
+                  flow: mergedRow.flow,
+                  flow_formula: mergedRow.flow_formula
+                });
+              }
+              
+              mergedData.push(mergedRow);
             });
+          } else {
+            // If no flow data, create a default row
+            const mergedRow = {
+              ...row,
+              previous_quarter_value: "",
+              current_quarter_value: "",
+              flow: "",
+              flow_formula: "",
+              year: "",
+              foreign_investor_flow: "",
+              quarter: "Q1", // Default quarter
+              id: symbol + "_default_" + idx,
+              onEvidenceClick: handleEvidenceClick,
+            };
+            mergedData.push(mergedRow);
           }
-          
-          return mergedRow;
         });
 
         console.log("Final merged data sample:", mergedData.slice(0, 3));
@@ -566,20 +689,50 @@ function App() {
     return () => { window.updateRowAfterCorrection = undefined; };
   }, []);
 
-  // Sort function to handle retained earnings properly
-  const sortByRetainedEarnings = (a, b) => {
-    const aValue = parseFloat(a.retained_earnings) || 0;
-    const bValue = parseFloat(b.retained_earnings) || 0;
-    return bValue - aValue; // Sort in descending order (highest first)
-  };
-
-  const filteredRows = rows
-    .filter(
-      (row) =>
-        (row.company_name && row.company_name.includes(search)) ||
-        (row.symbol && row.symbol.includes(search))
-    )
-    .sort(sortByRetainedEarnings); // Sort by retained earnings
+  // Filter rows based on search and quarter filter
+  const filteredRows = useMemo(() => {
+    let filtered = rows;
+    
+    // Show all companies but only those with data for the selected quarter will have actual values
+    // Companies without data for the selected quarter will show "لايوجد"
+    filtered = filtered.filter(row => {
+      // Always show the row, but only if it has the selected quarter data
+      return row.quarter === quarterFilter;
+    });
+    
+    // If no companies have data for the selected quarter, show all companies with "لايوجد" values
+    if (filtered.length === 0) {
+      // Get unique companies from all rows
+      const uniqueCompanies = new Map();
+      rows.forEach(row => {
+        if (!uniqueCompanies.has(row.symbol)) {
+          uniqueCompanies.set(row.symbol, {
+            ...row,
+            previous_quarter_value: "لايوجد",
+            current_quarter_value: "لايوجد",
+            flow: "لايوجد",
+            foreign_investor_flow: "لايوجد",
+            quarter: quarterFilter,
+            id: row.symbol + "_" + quarterFilter + "_no_data"
+          });
+        }
+      });
+      filtered = Array.from(uniqueCompanies.values());
+    }
+    
+    console.log(`Showing ${filtered.length} companies for ${quarterFilter}`);
+    
+    // Then apply search filter
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filtered = filtered.filter((row) =>
+        (row.symbol && row.symbol.toString().toLowerCase().includes(searchLower)) ||
+        (row.company_name && row.company_name.toLowerCase().includes(searchLower))
+      );
+    }
+    
+    return filtered;
+  }, [rows, search, quarterFilter]);
 
   // Delete handler
   const handleDeleteExport = (file) => {
@@ -783,9 +936,77 @@ function App() {
             </Tooltip>
           </Box>
         </Box>
+        <Box sx={{ display: "flex", gap: 2, alignItems: "center", mb: 3 }}>
+            <TextField
+              label="البحث في الجدول"
+              variant="outlined"
+              size="small"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              sx={{
+                minWidth: 300,
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: 2,
+                  "& fieldset": { borderColor: "#e0e0e0" },
+                  "&:hover fieldset": { borderColor: "#1e6641" },
+                  "&:focus fieldset": { borderColor: "#1e6641" },
+                },
+                "& .MuiInputLabel-root": { color: "#666" },
+                "& .MuiInputLabel-root.Mui-focused": { color: "#1e6641" },
+              }}
+            />
+            
+            {/* Quarter Filter Dropdown */}
+            <TextField
+              select
+              label="تصفية حسب الربع"
+              variant="outlined"
+              size="small"
+              value={quarterFilter}
+              onChange={(e) => setQuarterFilter(e.target.value)}
+              sx={{
+                minWidth: 200,
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: 2,
+                  "& fieldset": { borderColor: "#e0e0e0" },
+                  "&:hover fieldset": { borderColor: "#1e6641" },
+                  "&:focus fieldset": { borderColor: "#1e6641" },
+                },
+                "& .MuiInputLabel-root": { color: "#666" },
+                "& .MuiInputLabel-root.Mui-focused": { color: "#1e6641" },
+              }}
+            >
+              <MenuItem value="Q1">الربع الأول (Q1)</MenuItem>
+              <MenuItem value="Q2">الربع الثاني (Q2)</MenuItem>
+              <MenuItem value="Q3">الربع الثالث (Q3)</MenuItem>
+            </TextField>
+            
+            <Tooltip title="تصدير الجدول إلى Excel">
+              <Button
+                variant="contained"
+                onClick={handleExcelExport}
+                sx={{
+                  bgcolor: "#1e6641",
+                  "&:hover": { bgcolor: "#155a35" },
+                  borderRadius: 2,
+                  px: 3,
+                  py: 1,
+                  textTransform: "none",
+                  fontSize: 16,
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                }}
+              >
+                <FileDownloadIcon sx={{ fontSize: 18, color: 'white' }} />
+                تصدير الجدول
+              </Button>
+            </Tooltip>
+          </Box>
         <DataGrid
           rows={filteredRows}
-          columns={columns}
+          columns={getColumns(quarterFilter)}
           pageSize={20}
           loading={loading}
           sx={{
