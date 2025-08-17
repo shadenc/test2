@@ -674,18 +674,23 @@ def create_app():
             elif quarter_filter == "Q4":
                 current_quarter = "2025Q4"
             
-            # Create the merged row with all required data
+            # Create the merged row with EXACTLY the same structure as App.js dashboard
             merged_row = {
-                'company_symbol': symbol,
-                'company_name': ownership_row.get('company_name', ''),
-                'ownership_all_foreign': ownership_row.get('ownership_all_foreign', ''),
-                'current_ownership': ownership_row.get('current_ownership', ''),
-                'strategic_foreign_ownership': ownership_row.get('strategic_foreign_ownership', ''),
-                'retained_earnings': quarter_data.get('current_value', 'لا يوجد'),
-                'reinvested_earnings': quarter_data.get('reinvested_earnings_flow', 'لا يوجد'),
-                'previous_quarter': previous_quarter,
-                'current_quarter': current_quarter,
-                'quarter_filter': quarter_filter
+                'رمز الشركة': symbol,
+                'الشركة': ownership_row.get('company_name', ''),
+                'ملكية جميع المستثمرين الأجانب': ownership_row.get('foreign_ownership', ''),
+                'الملكية الحالية': ownership_row.get('max_allowed', ''),
+                'ملكية المستثمر الاستراتيجي الأجنبي': ownership_row.get('investor_limit', ''),
+                'الأرباح المبقاة للربع السابق': quarter_data.get('previous_value', 'لايوجد'),
+                'الأرباح المبقاة للربع الحالي': quarter_data.get('current_value', 'لايوجد'),
+                'حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)': quarter_data.get('flow', 'لايوجد'),
+                'تدفق الأرباح المبقاة للمستثمر الأجنبي': quarter_data.get('reinvested_earnings_flow', 'لايوجد'),
+                'صافي الربح': net_profit_value,
+                'صافي الربح للمستثمر الأجنبي': quarter_data.get('net_profit_foreign_investor', 'لايوجد'),
+                'الأرباح الموزعة للمستثمر الأجنبي': quarter_data.get('distributed_profits_foreign_investor', 'لايوجد'),
+                'الربع': quarter_filter,
+                'السنة': quarter_data.get('year', ''),
+                'صيغة التدفق': quarter_data.get('flow_formula', '')
             }
             
             merged_data.append(merged_row)
