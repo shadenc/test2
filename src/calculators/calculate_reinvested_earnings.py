@@ -1,93 +1,300 @@
+#!/usr/bin/env python3
+"""
+Calculate Retained Earnings Flow (Quarterly Changes)
+Flow = Retained Earnings (Current Q) - Retained Earnings (Previous Q)
+"""
+
 import json
 import pandas as pd
 import re
+from datetime import datetime
+from typing import Dict, List, Optional
 
-# Load retained earnings data
-with open('data/results/retained_earnings_results.json', 'r', encoding='utf-8') as f:
-    retained_data = json.load(f)
+def parse_statement_info(filename: str) -> Dict:
+    """Parse PDF filename to extract company, statement type, and year"""
+    # Example: 2222_q1_2025.pdf -> company: 2222, type: q1, year: 2025
+    # Example: 2382_annual_2024.pdf -> company: 2382, type: annual, year: 2024
+    
+    parts = filename.replace('.pdf', '').split('_')
+    if len(parts) >= 3:
+        company = parts[0]
+        statement_type = parts[1]
+        year = int(parts[2])
+        
+        return {
+            'company': company,
+            'type': statement_type,
+            'year': year
+        }
+    return None
 
-# Extract year from extraction results or pdf_filename for all entries
-for r in retained_data:
-    # First try to get year from extraction results (most accurate)
-    if r.get('year'):
-        r['year'] = int(r['year'])
-    else:
-        # Fallback to parsing filename
-        match = re.search(r'(\d{4})[^\d]*(\d{4})', r['pdf_filename'])
-        if match:
-            r['year'] = int(match.group(2))  # Use the second 4-digit number as year
-        else:
-            r['year'] = None
+def calculate_retained_earnings_flow(retained_data: List[Dict]) -> List[Dict]:
+    """Calculate quarterly flow of retained earnings"""
+    
+    # Group by company
+    companies = {}
+    for item in retained_data:
+        if not item.get('success'):
+            continue
+            
+        company = item['company_symbol']
+        if company not in companies:
+            companies[company] = []
+        
+        # Parse statement info
+        info = parse_statement_info(item['pdf_filename'])
+        if not info:
+            continue
+            
+        companies[company].append({
+            'type': info['type'],
+            'year': info['year'],
+            'value': item['numeric_value'],
+            'pdf_filename': item['pdf_filename']
+        })
+    
+    flow_results = []
+    
+    for company, statements in companies.items():
+        # Sort statements by year and type (annual first, then q1, q2, q3, q4)
+        type_order = {'annual': 0, 'q1': 1, 'q2': 2, 'q3': 3, 'q4': 4}
+        statements.sort(key=lambda x: (x['year'], type_order.get(x['type'], 999)))
+        
+        # Find current year (most recent year with data)
+        if not statements:
+            continue
+            
+        current_year = max(s['year'] for s in statements)
+        
+        # Calculate flows for current year
+        flows = []
+        
+        # Q1 Flow = Q1 current year - Annual previous year
+        q1_current = next((s for s in statements if s['type'] == 'q1' and s['year'] == current_year), None)
+        annual_previous = next((s for s in statements if s['type'] == 'annual' and s['year'] == current_year - 1), None)
+        
+        if q1_current and annual_previous:
+            q1_flow = q1_current['value'] - annual_previous['value']
+            flows.append({
+                'quarter': 'Q1',
+                'year': current_year,
+                'current_value': q1_current['value'],
+                'previous_value': annual_previous['value'],
+                'flow': q1_flow,
+                'flow_formula': f"Q1 {current_year} - Annual {current_year-1}"
+            })
+        
+        # Q2 Flow = Q2 current year - Q1 current year
+        q2_current = next((s for s in statements if s['type'] == 'q2' and s['year'] == current_year), None)
+        if q2_current and q1_current:
+            q2_flow = q2_current['value'] - q1_current['value']
+            flows.append({
+                'quarter': 'Q2',
+                'year': current_year,
+                'current_value': q2_current['value'],
+                'previous_value': q1_current['value'],
+                'flow': q2_flow,
+                'flow_formula': f"Q2 {current_year} - Q1 {current_year}"
+            })
+        
+        # Q3 Flow = Q3 current year - Q2 current year
+        q3_current = next((s for s in statements if s['type'] == 'q3' and s['year'] == current_year), None)
+        if q3_current and q2_current:
+            q3_flow = q3_current['value'] - q2_current['value']
+            flows.append({
+                'quarter': 'Q3',
+                'year': current_year,
+                'current_value': q3_current['value'],
+                'previous_value': q2_current['value'],
+                'flow': q3_flow,
+                'flow_formula': f"Q3 {current_year} - Q2 {current_year}"
+            })
+        
+        # Q4 Flow = Q4 current year - Q3 current year
+        q4_current = next((s for s in statements if s['type'] == 'q4' and s['year'] == current_year), None)
+        if q4_current and q3_current:
+            q4_flow = q4_current['value'] - q3_current['value']
+            flows.append({
+                'quarter': 'Q4',
+                'year': current_year,
+                'current_value': q4_current['value'],
+                'previous_value': q3_current['value'],
+                'flow': q4_flow,
+                'flow_formula': f"Q4 {current_year} - Q3 {current_year}"
+            })
+        
+        # Add flows to results
+        for flow in flows:
+            flow_results.append({
+                'company_symbol': company,
+                'quarter': flow['quarter'],
+                'year': flow['year'],
+                'current_value': flow['current_value'],
+                'previous_value': flow['previous_value'],
+                'flow': flow['flow'],
+                'flow_formula': flow['flow_formula']
+            })
+    
+    return flow_results
 
-# Add error column for failed extractions
-for r in retained_data:
-    if not r.get('success'):
-        r['error'] = r.get('error', 'Extraction failed')
-    else:
-        r['error'] = ''
+def main():
+    """Main function to calculate retained earnings flow"""
+    print("🔄 Calculating Retained Earnings Flow (Quarterly Changes)")
+    print("=" * 60)
+    
+    # Load retained earnings data
+    try:
+        with open('data/results/retained_earnings_results.json', 'r', encoding='utf-8') as f:
+            retained_data = json.load(f)
+        print(f"✅ Loaded {len(retained_data)} retained earnings records")
+    except FileNotFoundError:
+        print("❌ Error: retained_earnings_results.json not found")
+        print("Please run the main extraction script first")
+        return
+    except Exception as e:
+        print(f"❌ Error loading data: {e}")
+        return
+    
+    # Calculate flows
+    print("🔄 Calculating quarterly flows...")
+    flow_results = calculate_retained_earnings_flow(retained_data)
+    
+    if not flow_results:
+        print("❌ No flows could be calculated")
+        return
+    
+    # Convert to DataFrame for easier manipulation
+    flow_df = pd.DataFrame(flow_results)
+    
+    # Load ownership data for additional context
+    try:
+        ownership_df = pd.read_csv('data/ownership/foreign_ownership_data.csv')
+        print(f"✅ Loaded ownership data for {len(ownership_df)} companies")
+        
+        # Merge with ownership data
+        # Ensure both keys are strings for merging
+        flow_df['company_symbol'] = flow_df['company_symbol'].astype(str)
+        ownership_df['symbol'] = ownership_df['symbol'].astype(str)
+        
+        merged = pd.merge(
+            flow_df, 
+            ownership_df[['symbol', 'company_name', 'foreign_ownership', 'max_allowed', 'investor_limit']], 
+            left_on='company_symbol', 
+            right_on='symbol', 
+            how='left'
+        )
+        
+        # Calculate reinvested earnings flow (foreign investor portion)
+        # تدفق الأرباح المبقاة للمستثمر الأجنبي = حجم الزيادة أو النقص في الأرباح المبقاة (التدفق) × ملكية المستثمر الاستراتيجي الأجنبي
+        merged['reinvested_earnings_flow'] = merged.apply(
+            lambda row: (
+                row['flow'] * (float(str(row['investor_limit']).replace('%', '')) / 100)
+                if (pd.notna(row['flow']) and 
+                    pd.notna(row['investor_limit']) and 
+                    str(row['investor_limit']).replace('%', '').replace('.', '').isdigit() and
+                    float(str(row['investor_limit']).replace('%', '')) > 0)
+                else 0
+            ), 
+            axis=1
+        )
+        
+        # Load net profit data for additional calculations
+        try:
+            with open('data/results/quarterly_net_profit.json', 'r', encoding='utf-8') as f:
+                net_profit_data = json.load(f)
+            print(f"✅ Loaded net profit data for {len(net_profit_data)} companies")
+            
+            # Convert net profit data to lookup format
+            net_profit_lookup = {}
+            for company in net_profit_data:
+                symbol = company.get('company_symbol')
+                if symbol:
+                    net_profit_lookup[symbol] = company
+            
+            # Calculate net profit for foreign investor
+            # صافي الربح للمستثمر الأجنبي = صافي الربح × ملكية المستثمر الاستراتيجي الأجنبي
+            merged['net_profit_foreign_investor'] = merged.apply(
+                lambda row: (
+                    net_profit_lookup.get(str(row['company_symbol']), {}).get('quarterly_net_profit', {}).get(f"{row['quarter']} {row['year']}", 0) * 
+                    (float(str(row['investor_limit']).replace('%', '')) / 100)
+                    if (str(row['company_symbol']) in net_profit_lookup and 
+                        pd.notna(row['investor_limit']) and 
+                        str(row['investor_limit']).replace('%', '').replace('.', '').isdigit() and
+                        float(str(row['investor_limit']).replace('%', '')) > 0)
+                    else 0
+                ), 
+                axis=1
+            )
+            
+            # Calculate distributed profits for foreign investor
+            # الأرباح الموزعة للمستثمر الأجنبي = صافي الربح للمستثمر الأجنبي - تدفق الأرباح المبقاة للمستثمر الأجنبي
+            merged['distributed_profits_foreign_investor'] = merged.apply(
+                lambda row: (
+                    row['net_profit_foreign_investor'] - row['reinvested_earnings_flow']
+                    if (pd.notna(row['net_profit_foreign_investor']) and pd.notna(row['reinvested_earnings_flow']))
+                    else 0
+                ), 
+                axis=1
+            )
+            
+            print(f"✅ Added net profit calculations for foreign investors")
+            
+        except FileNotFoundError:
+            print("⚠️ Warning: quarterly_net_profit.json not found, skipping net profit calculations")
+            merged['net_profit_foreign_investor'] = 0
+            merged['distributed_profits_foreign_investor'] = 0
+        except Exception as e:
+            print(f"⚠️ Warning: Error processing net profit data: {e}")
+            merged['net_profit_foreign_investor'] = 0
+            merged['distributed_profits_foreign_investor'] = 0
+        
+        # Clean up the merged data
+        final_results = merged[['company_symbol', 'company_name', 'quarter', 'year', 'current_value', 'previous_value', 'flow', 'flow_formula', 'foreign_ownership', 'max_allowed', 'investor_limit', 'reinvested_earnings_flow', 'net_profit_foreign_investor', 'distributed_profits_foreign_investor']].copy()
+        
+        print(f"✅ Calculated flows for {len(final_results)} company-quarters")
+        print(f"✅ Added foreign investor flow calculations")
+        
+        # Save to CSV
+        csv_path = 'data/results/retained_earnings_flow.csv'
+        final_results.to_csv(csv_path, index=False, encoding='utf-8')
+        print(f"✅ Saved flow data to {csv_path}")
+        
+        # Save to JSON for debugging
+        json_path = 'data/results/retained_earnings_flow.json'
+        final_results.to_json(json_path, orient='records', force_ascii=False, indent=2)
+        print(f"✅ Saved flow data to {json_path}")
+        
+        # Display sample results
+        print("\n📊 Sample Flow Results:")
+        print("=" * 80)
+        for _, row in final_results.head(10).iterrows():
+            print(f"Company: {row['company_name']} ({row['company_symbol']})")
+            print(f"Quarter: {row['quarter']} {row['year']}")
+            print(f"Flow: {row['flow']:,.0f} SAR ({row['flow_formula']})")
+            print(f"Foreign Investor Flow: {row['reinvested_earnings_flow']:,.2f} SAR")
+            print(f"Net Profit for Foreign Investor: {row['net_profit_foreign_investor']:,.2f} SAR")
+            print(f"Distributed Profits for Foreign Investor: {row['distributed_profits_foreign_investor']:,.2f} SAR")
+            print("-" * 40)
+        
+    except FileNotFoundError:
+        print("⚠️ Warning: ownership data not found, saving basic flow data only")
+        # Save basic flow data without ownership calculations
+        csv_path = 'data/results/retained_earnings_flow.csv'
+        flow_df.to_csv(csv_path, index=False, encoding='utf-8')
+        print(f"✅ Saved basic flow data to {csv_path}")
+        
+        json_path = 'data/results/retained_earnings_flow.json'
+        flow_df.to_json(json_path, orient='records', force_ascii=False, indent=2)
+        print(f"✅ Saved basic flow data to {json_path}")
+        
+    except Exception as e:
+        print(f"❌ Error processing ownership data: {e}")
+        # Save basic flow data as fallback
+        csv_path = 'data/results/retained_earnings_flow.csv'
+        flow_df.to_csv(csv_path, index=False, encoding='utf-8')
+        print(f"✅ Saved basic flow data to {csv_path}")
+    
+    print("\n🎉 Flow calculation completed successfully!") 
 
-retained_df = pd.DataFrame(retained_data)
-
-# Load foreign ownership data
-ownership_df = pd.read_csv('data/ownership/foreign_ownership_data.csv')
-
-def clean_pct(val):
-    if pd.isnull(val):
-        return None
-    return float(str(val).replace('%','').replace(',','').strip())
-
-# Clean all percentage columns
-ownership_df['foreign_ownership_pct'] = ownership_df['foreign_ownership'].apply(clean_pct)
-ownership_df['max_allowed_pct'] = ownership_df['max_allowed'].apply(clean_pct)
-ownership_df['investor_limit_pct'] = ownership_df['investor_limit'].apply(clean_pct)
-
-# Ensure both keys are strings for merging
-retained_df['company_symbol'] = retained_df['company_symbol'].astype(str)
-ownership_df['symbol'] = ownership_df['symbol'].astype(str)
-
-# Merge on company_symbol <-> symbol
-merged = pd.merge(
-    retained_df,
-    ownership_df,
-    left_on='company_symbol',
-    right_on='symbol',
-    how='left'
-)
-
-# Calculate reinvested earnings only for successful extractions
-merged['retained_earnings'] = merged.apply(
-    lambda row: row['numeric_value'] if row.get('success') and pd.notnull(row.get('numeric_value')) else '', axis=1
-)
-merged['reinvested_earnings'] = merged.apply(
-    lambda row: row['numeric_value'] * (row['investor_limit_pct'] / 100) if row.get('success') and pd.notnull(row.get('numeric_value')) and pd.notnull(row.get('investor_limit_pct')) else '', axis=1
-)
-
-# Select and rename columns for output - include ALL ownership data
-output_cols = [
-    'company_symbol',
-    'company_name',
-    'foreign_ownership',      # ملكية جميع المستثمرين الأجانب
-    'max_allowed',           # الملكية الحالية
-    'investor_limit',        # ملكية المستثمر الاستراتيجي الأجنبي
-    'retained_earnings',
-    'reinvested_earnings',
-    'year',
-    'pdf_filename',
-    'error'
-]
-
-output = merged[output_cols]
-
-# Save to CSV
-output.to_csv('frontend/public/reinvested_earnings_results.csv', index=False, encoding='utf-8')
-
-# Also save to backend data/results directory for API serving
-import os
-os.makedirs('data/results', exist_ok=True)
-output.to_csv('data/results/reinvested_earnings_results.csv', index=False, encoding='utf-8')
-
-print('Done! Results saved to frontend/public/reinvested_earnings_results.csv')
-print('Results also saved to data/results/reinvested_earnings_results.csv for API serving')
-print(f'Total companies processed: {len(output)}')
-print(f'Companies with retained earnings: {len(output[output["retained_earnings"] != ""])}')
-print(f'Companies with reinvested earnings: {len(output[output["reinvested_earnings"] != ""])}') 
+if __name__ == "__main__":
+    main() 

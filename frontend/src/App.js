@@ -617,6 +617,8 @@ function App() {
   const [userExportsError, setUserExportsError] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState(null);
+  const [selectedExports, setSelectedExports] = useState(new Set());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [netProfitData, setNetProfitData] = useState({});
   // Commented out since we're using inline editing
   // const [editModalOpen, setEditModalOpen] = useState(false);
@@ -697,6 +699,70 @@ function App() {
     } catch (error) {
       alert('تعذر الاتصال بالخادم: ' + error.message);
       setLoading(false);
+    }
+  };
+
+  // Function to handle export selection
+  const handleExportSelection = (fileId, checked) => {
+    const newSelected = new Set(selectedExports);
+    if (checked) {
+      newSelected.add(fileId);
+    } else {
+      newSelected.delete(fileId);
+    }
+    setSelectedExports(newSelected);
+  };
+
+  // Function to handle select all exports
+  const handleSelectAllExports = (checked) => {
+    if (checked) {
+      setSelectedExports(new Set(userExports.map(file => file.id)));
+    } else {
+      setSelectedExports(new Set());
+    }
+  };
+
+  // Function to fetch user exports
+  const fetchUserExports = async () => {
+    setUserExportsLoading(true);
+    try {
+      const response = await fetch('http://localhost:5002/api/user_exports');
+      if (response.ok) {
+        const data = await response.json();
+        setUserExports(data);
+        setUserExportsError(null);
+      } else {
+        setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
+      }
+    } catch (error) {
+      setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
+    } finally {
+      setUserExportsLoading(false);
+    }
+  };
+
+  // Function to handle bulk delete
+  const handleBulkDelete = async () => {
+    if (selectedExports.size === 0) return;
+    
+    try {
+      const deletePromises = Array.from(selectedExports).map(fileId => {
+        const file = userExports.find(f => f.id === fileId);
+        return fetch(`http://localhost:5002${file.download_url}`, { method: 'DELETE' });
+      });
+      
+      await Promise.all(deletePromises);
+      
+      // Remove deleted files from state
+      setUserExports(prev => prev.filter(file => !selectedExports.has(file.id)));
+      setSelectedExports(new Set());
+      setBulkDeleteDialogOpen(false);
+      
+      // Refresh the list
+      fetchUserExports();
+    } catch (error) {
+      console.error('Error deleting files:', error);
+      alert('حدث خطأ أثناء حذف الملفات');
     }
   };
 
@@ -1607,6 +1673,20 @@ function App() {
         </DialogActions>
       </Dialog>
 
+      {/* Bulk delete confirmation dialog */}
+      <Dialog open={bulkDeleteDialogOpen} onClose={() => setBulkDeleteDialogOpen(false)}>
+        <DialogTitle sx={{ fontWeight: 700, color: '#1e6641' }}>تأكيد الحذف الجماعي</DialogTitle>
+        <DialogContent>
+          <Typography>
+            هل أنت متأكد أنك تريد حذف {selectedExports.size} ملفات محددة؟ لا يمكن التراجع عن هذه العملية.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBulkDeleteDialogOpen(false)} sx={{ color: '#37474f' }}>إلغاء</Button>
+          <Button onClick={handleBulkDelete} sx={{ color: '#b71c1c', fontWeight: 700 }}>حذف {selectedExports.size} ملفات</Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Sidebar Drawer */}
       <Drawer
         anchor="left"
@@ -1620,13 +1700,13 @@ function App() {
             alignItems: 'center',
             justifyContent: 'space-between',
             px: 3,
-            py: 2.5,
+            py: 3.5,
             bgcolor: '#fff',
             borderBottom: '1.5px solid #e0e0e0',
             boxShadow: '0 2px 8px 0 rgba(30,102,65,0.04)',
             borderTopRightRadius: 16,
             borderTopLeftRadius: 16,
-            minHeight: 72,
+            minHeight: 88,
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
@@ -1657,20 +1737,20 @@ function App() {
           </Box>
         </Box>
         {/* Soft divider and extra space below header */}
-        <Box sx={{ height: 18 }} />
-        <Box sx={{ width: '100%', height: 2, bgcolor: '#f4f6fa', mb: 2, borderRadius: 2 }} />
+        <Box sx={{ height: 24 }} />
+        <Box sx={{ width: '100%', height: 2, bgcolor: '#f4f6fa', mb: 3, borderRadius: 2 }} />
         {/* User-Saved Exports Section */}
-        <Box sx={{ mt: 2, pb: 0, px: 0 }}>
+        <Box sx={{ mt: 3, pb: 0, px: 0 }}>
           <Box sx={{
             display: 'flex',
             alignItems: 'center',
             bgcolor: '#e9f5ee',
             borderRadius: 4,
-            px: 2,
-            py: 1.2,
+            px: 2.5,
+            py: 1.5,
             width: '100%',
             boxSizing: 'border-box',
-            mb: 1.5,
+            mb: 2,
             gap: 1.5,
           }}>
             <Box sx={{ width: 3, height: 24, bgcolor: '#1e6641', borderRadius: 6, mr: 0 }} />
@@ -1689,6 +1769,51 @@ function App() {
             </Typography>
           </Box>
         </Box>
+        
+        {/* Selection controls */}
+        {userExports.length > 0 && (
+          <Box sx={{ px: 2.5, mb: 2.5 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between',
+              bgcolor: '#f8f9fa',
+              borderRadius: 2,
+              p: 2,
+              border: '1px solid #e0e0e0'
+            }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <input
+                  type="checkbox"
+                  checked={selectedExports.size === userExports.length}
+                  onChange={(e) => handleSelectAllExports(e.target.checked)}
+                  style={{ width: 18, height: 18, accentColor: '#1e6641' }}
+                />
+                <Typography sx={{ fontSize: 14, color: '#666', fontWeight: 500 }}>
+                  تحديد الكل
+                </Typography>
+              </Box>
+              {selectedExports.size > 0 && (
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  onClick={() => setBulkDeleteDialogOpen(true)}
+                  sx={{ 
+                    borderRadius: 2, 
+                    textTransform: 'none',
+                    borderColor: '#d32f2f',
+                    color: '#d32f2f',
+                    '&:hover': { borderColor: '#b71c1c', bgcolor: '#ffebee' }
+                  }}
+                >
+                  حذف {selectedExports.size} ملفات محددة
+                </Button>
+              )}
+            </Box>
+          </Box>
+        )}
+        
         <List>
           {userExportsLoading ? (
             <ListItem sx={{ justifyContent: 'center' }}><CircularProgress size={22} sx={{ color: '#1e6641' }} /></ListItem>
@@ -1727,6 +1852,18 @@ function App() {
                   },
                 }}
               >
+                {/* Selection checkbox */}
+                <input
+                  type="checkbox"
+                  checked={selectedExports.has(file.id || idx)}
+                  onChange={(e) => handleExportSelection(file.id || idx, e.target.checked)}
+                  style={{ 
+                    width: 18, 
+                    height: 18, 
+                    accentColor: '#1e6641',
+                    marginRight: 12
+                  }}
+                />
                 <Box sx={{ flexGrow: 1 }}>
                   <Typography sx={{ fontWeight: 500, color: '#1e6641', fontSize: 15 }}>
                     {(() => {
@@ -1795,17 +1932,17 @@ function App() {
           )}
         </List>
         {/* Divider between sections */}
-        <Box sx={{ mt: 2, pb: 0, px: 0 }}>
+        <Box sx={{ mt: 4, pb: 0, px: 0 }}>
           <Box sx={{
             display: 'flex',
             alignItems: 'center',
             bgcolor: '#e9f5ee',
             borderRadius: 4,
-            px: 2,
-            py: 1.2,
+            px: 2.5,
+            py: 1.5,
             width: '100%',
             boxSizing: 'border-box',
-            mb: 1.5,
+            mb: 2,
             gap: 1.5,
           }}>
             <Box sx={{ width: 3, height: 24, bgcolor: '#1e6641', borderRadius: 6, mr: 0 }} />
@@ -1833,24 +1970,52 @@ function App() {
             <ListItem sx={{ justifyContent: 'center', color: '#888' }}>لا توجد ملفات محفوظة بعد</ListItem>
           ) : (
             snapshots.map((snap, idx) => (
-              <ListItem key={idx} sx={{ pl: 2, pr: 2, py: 1, borderBottom: '1px solid #e0e0e0', display: 'flex', alignItems: 'center' }}>
-                <span style={{ fontSize: 22, marginLeft: 8 }}>📄</span>
-                <Typography sx={{ fontWeight: 500, color: '#1e6641', flexGrow: 1, fontSize: 16 }}>
+              <ListItem key={idx} sx={{ 
+                pl: 3, 
+                pr: 3, 
+                py: 2.2,
+                mb: 1.5,
+                bgcolor: '#fff',
+                borderRadius: 2.5,
+                boxShadow: '0 1px 6px 0 rgba(30,102,65,0.06)',
+                display: 'flex',
+                alignItems: 'center',
+                minHeight: 56,
+                border: 'none',
+                transition: 'box-shadow 0.2s, transform 0.2s',
+                '&:hover': {
+                  boxShadow: '0 4px 16px 0 rgba(30,102,65,0.10)',
+                  transform: 'translateY(-2px) scale(1.01)',
+                },
+              }}>
+                <span style={{ fontSize: 22, marginRight: 12 }}>📄</span>
+                <Typography sx={{ fontWeight: 500, color: '#1e6641', flexGrow: 1, fontSize: 15 }}>
                   {`${snap.year} ${snap.quarter.replace('Q', 'Q')} — ${snap.snapshot_date}`}
                 </Typography>
                 <Tooltip title={`تاريخ الاستخراج: ${snap.snapshot_date}`} arrow>
-                  <Button
-                    variant="contained"
-                    color="success"
-                    size="small"
+                  <IconButton
+                    aria-label="تحميل"
                     href={`http://localhost:5002${snap.download_url}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    sx={{ minWidth: 0, px: 2, py: 1, borderRadius: 2, fontWeight: 600 }}
-                    startIcon={<DownloadIcon />}
+                    sx={{
+                      color: '#1e6641',
+                      bgcolor: 'transparent',
+                      borderRadius: '50%',
+                      p: 0.7,
+                      mx: 0.5,
+                      transition: 'color 0.2s, background 0.2s',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 22,
+                      height: 36,
+                      width: 36,
+                      minWidth: 36,
+                    }}
                   >
-                    تحميل
-                  </Button>
+                    <DownloadIcon sx={{ fontSize: 22 }} />
+                  </IconButton>
                 </Tooltip>
               </ListItem>
             ))

@@ -83,36 +83,48 @@ class EvidenceScreenshotGenerator:
             if not result:
                 logger.warning(f"Could not find value {search_value} in {pdf_path}")
                 return None
-            
             page_num, rect = result
-            
             # Open PDF and get the page
             doc = fitz.open(pdf_path)
             page = doc[page_num]
-            
             # Add highlight annotation
             highlight = page.add_highlight_annot(rect)
             highlight.set_colors(stroke=(1, 1, 0))  # Yellow highlight
             highlight.set_opacity(0.5)
-            
             # Create pixmap with higher DPI for better quality
             mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better quality
             pix = page.get_pixmap(matrix=mat, dpi=300)
-            
-            # Generate output filename
-            output_filename = f"{company_symbol}_evidence.png"
+            # Generate output filename using the PDF base name
+            base_name = Path(pdf_path).stem
+            output_filename = f"{base_name}_evidence.png"
             output_path = self.output_dir / output_filename
-            
             # Save the screenshot
             pix.save(str(output_path))
-            
             doc.close()
-            
             logger.info(f"Generated evidence screenshot: {output_path}")
             return str(output_path)
-            
         except Exception as e:
             logger.error(f"Error generating screenshot for {pdf_path}: {e}")
+            return None
+    
+    def generate_page_screenshot(self, pdf_path: str, page_number: int, company_symbol: str) -> Optional[str]:
+        """
+        Generate a screenshot of the specified page (no highlight).
+        Returns the path to the generated screenshot or None.
+        """
+        try:
+            doc = fitz.open(pdf_path)
+            page = doc[page_number - 1]  # Convert 1-based to 0-based
+            mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better quality
+            pix = page.get_pixmap(matrix=mat, dpi=300)
+            output_filename = f"{company_symbol}_evidence.png"
+            output_path = self.output_dir / output_filename
+            pix.save(str(output_path))
+            doc.close()
+            logger.info(f"Generated page screenshot: {output_path}")
+            return str(output_path)
+        except Exception as e:
+            logger.error(f"Error generating page screenshot for {pdf_path}: {e}")
             return None
     
     def generate_all_evidence_screenshots(self, results_file: str = "retained_earnings_results.json"):

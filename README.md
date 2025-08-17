@@ -46,7 +46,7 @@ Foreign Investment/
 │   └── screenshots/            # Evidence screenshots
 ├── frontend/                    # React frontend
 │   └── src/
-├── main.py                      # Main orchestration script
+
 └── requirements.txt             # Python dependencies
 ```
 
@@ -62,10 +62,16 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Run Complete Workflow
+### 2. Run Individual Components
 ```bash
-# Run the entire system
-python main.py --full
+# Extract retained earnings from PDFs
+python src/extractors/extract_retained_earnings_all_pdfs.py
+
+# Calculate reinvested earnings
+python src/calculators/calculate_reinvested_earnings.py
+
+# Generate evidence screenshots
+python src/utils/generate_evidence_screenshots.py
 ```
 
 ### 3. Start Frontend
@@ -77,44 +83,37 @@ npm start
 
 ## 🔄 Workflow Steps
 
-### Step 1: Scrape Ownership Data
-Scrapes foreign ownership percentages from Tadawul website.
-```bash
-python main.py --scrape-ownership
-```
-
-### Step 2: Download Financial Reports
-Downloads annual financial reports (PDFs) from company profiles.
-```bash
-python main.py --download-pdfs
-```
-
-### Step 3: Extract Retained Earnings
+### Step 1: Extract Retained Earnings
 Processes PDFs to extract retained earnings using LLM + regex.
 ```bash
-python main.py --extract-earnings
+python src/extractors/extract_retained_earnings_all_pdfs.py
 ```
 
-### Step 4: Calculate Reinvested Earnings
+### Step 2: Calculate Reinvested Earnings
 Combines ownership data with retained earnings to calculate reinvested amounts.
 ```bash
-python main.py --calculate
+python src/calculators/calculate_reinvested_earnings.py
 ```
 
-### Step 5: Evidence System
-Generates evidence screenshots and starts API server.
+### Step 3: Generate Evidence Screenshots
+Creates evidence screenshots for data verification.
 ```bash
-python main.py --evidence-api
+python src/utils/generate_evidence_screenshots.py
+```
+
+### Step 4: Start Evidence API
+Serves evidence screenshots and extraction metadata.
+```bash
+python src/api/evidence_api.py
 ```
 
 ## 📊 Data Flow
 
-1. **Scrape Ownership Data** → `data/ownership/foreign_ownership_data.csv`
-2. **Download PDFs** → `data/pdfs/`
-3. **Extract Retained Earnings** → `data/results/retained_earnings_results.json`
-4. **Calculate Reinvested Earnings** → `frontend/public/reinvested_earnings_results.csv`
-5. **Generate Evidence** → `output/screenshots/`
-6. **Display Results** → React frontend with evidence API
+1. **Extract Retained Earnings** → `data/results/retained_earnings_results.json`
+2. **Calculate Reinvested Earnings** → `frontend/public/reinvested_earnings_results.csv`
+3. **Generate Evidence** → `output/screenshots/`
+4. **Start Evidence API** → `http://localhost:5002`
+5. **Display Results** → React frontend with evidence modal
 
 ## 🛠️ Key Features
 

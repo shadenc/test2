@@ -45,67 +45,40 @@ class ExcelExporter:
             ws = wb.active
             ws.title = "Financial Data"  # Shorter title to avoid Excel issues
             
-            # Define headers (matching the dashboard columns)
-            headers = [
-                "رمز الشركة",
-                "الشركة", 
-                "ملكية جميع المستثمرين الأجانب",
-                "الملكية الحالية",
-                "ملكية المستثمر الاستراتيجي الأجنبي",
-                "الأرباح المبقاة",
-                "الأرباح المعاد استثمارها"
-            ]
+            # Get headers dynamically from the data columns and reverse for RTL layout
+            headers = list(data.columns)[::-1]  # Reverse the order for RTL layout
             
             # Add headers
             for col, header in enumerate(headers, 1):
                 cell = ws.cell(row=1, column=col, value=header)
                 cell.font = self.header_font
                 cell.fill = self.header_fill
-                cell.alignment = self.center_alignment
+                cell.alignment = self.right_alignment  # Right-align headers for RTL
                 cell.border = self.border
             
             # Add data rows
             for row_idx, (_, row) in enumerate(data.iterrows(), 2):
-                # Clean and format retained earnings
-                retained_earnings = row.get('retained_earnings', '')
-                if retained_earnings and str(retained_earnings).strip() and str(retained_earnings).lower() not in ['', 'null', 'undefined', 'nan', 'لايوجد']:
-                    try:
-                        # Convert to float and format
-                        num_value = float(str(retained_earnings).replace(',', ''))
-                        retained_earnings = f"{num_value:,.0f}"
-                    except (ValueError, TypeError):
-                        retained_earnings = 'لايوجد'
-                else:
-                    retained_earnings = 'لايوجد'
+                row_data = []
+                for col, header in enumerate(headers, 1):
+                    value = row.get(header, '')
+                    
+                    # Clean and format numeric values
+                    if value and str(value).strip() and str(value).lower() not in ['', 'null', 'undefined', 'nan', 'لايوجد']:
+                        try:
+                            # Convert to float and format if it's a number
+                            num_value = float(str(value).replace(',', ''))
+                            if num_value != 0:  # Only format non-zero numbers
+                                formatted_value = f"{num_value:,.0f}"
+                            else:
+                                formatted_value = '0'
+                        except (ValueError, TypeError):
+                            formatted_value = str(value)
+                    else:
+                        formatted_value = 'لايوجد'
+                    
+                    row_data.append(formatted_value)
                 
-                # Clean and format reinvested earnings
-                reinvested_earnings = row.get('reinvested_earnings', '')
-                if reinvested_earnings and str(reinvested_earnings).strip() and str(reinvested_earnings).lower() not in ['', 'null', 'undefined', 'nan', 'لايوجد']:
-                    try:
-                        # Convert to float and format
-                        num_value = float(str(reinvested_earnings).replace(',', ''))
-                        reinvested_earnings = f"{num_value:,.0f}"
-                    except (ValueError, TypeError):
-                        reinvested_earnings = 'لايوجد'
-                else:
-                    reinvested_earnings = 'لايوجد'
-                
-                # Clean ownership data
-                foreign_ownership = str(row.get('foreign_ownership', '')).strip()
-                max_allowed = str(row.get('max_allowed', '')).strip()
-                investor_limit = str(row.get('investor_limit', '')).strip()
-                
-                # Add row data with clean values
-                row_data = [
-                    str(row.get('company_symbol', row.get('symbol', ''))).strip(),
-                    str(row.get('company_name', '')).strip(),
-                    foreign_ownership,
-                    max_allowed,
-                    investor_limit,
-                    retained_earnings,
-                    reinvested_earnings
-                ]
-                
+                # Add row data with reversed order for RTL layout
                 for col, value in enumerate(row_data, 1):
                     cell = ws.cell(row=row_idx, column=col, value=value)
                     cell.font = self.data_font

@@ -23,6 +23,9 @@ STATEMENT_PRIORITIES = [
     "report"
 ]
 
+# Set the target year here. By default, use the current year, but you can set it manually if needed.
+target_year = datetime.now().year  # Change this to e.g. 2024 to process 2024 and 2023 Q4
+
 def get_company_symbols_from_json():
     """Get company symbols from the existing JSON file."""
     try:
@@ -155,16 +158,13 @@ async def navigate_to_company_profile(page: Page, symbol: str) -> bool:
         print(f"❌ Search failed for {symbol}: {e}")
         return False
 
-async def get_latest_annual_report(page: Page, symbol: str) -> Optional[Tuple[str, int]]:
-    """Navigate to company profile and find the latest annual report PDF URL and its year - from download_annual_reports.py."""
-    # Use the working navigation function
+async def get_all_financial_reports(page: Page, symbol: str):
+    """Find all available financial report PDFs (Annual, Q1-Q4) and their years, filtered for target_year and Q4 of previous year."""
     if not await navigate_to_company_profile(page, symbol):
-        return None
+        return []
     print("On company profile page, waiting for content...")
-    await page.wait_for_timeout(3000)  # Wait longer for the page to load tabs
-    # Print all <li> elements' text for debugging
+    await page.wait_for_timeout(3000)
     tabs = await page.query_selector_all("li")
-    # Robust: Find the 'FINANCIAL STATEMENTS AND REPORTS' tab by substring
     try:
         target_text = "financial statements and reports"
         for tab in tabs:
@@ -176,19 +176,39 @@ async def get_latest_annual_report(page: Page, symbol: str) -> Optional[Tuple[st
                 break
         else:
             print("❌ 'Financial Statements and Reports' tab not found by substring.")
-            return None
+            return []
     except PlaywrightTimeoutError:
         print("❌ Timeout while trying to find financial tab.")
-        return None
-    # Wait for the financial statements table to appear
+        return []
     try:
+        # Wait for any table to appear first
+        await page.wait_for_selector("table", timeout=10000)
+        print("Table found, waiting for content to load...")
+        
+        # Wait a bit more for dynamic content
+        await page.wait_for_timeout(2000)
+        
+        # Try to find the financial statements table
         table_selector = "table:has-text('Annual')"
-        await page.wait_for_selector(table_selector, timeout=10000)
-        print("Financial statements table loaded.")
+        try:
+            await page.wait_for_selector(table_selector, timeout=5000)
+            print("Financial statements table loaded with 'Annual' text.")
+        except:
+            # If that fails, look for any table with financial data
+            tables = await page.query_selector_all("table")
+            print(f"Found {len(tables)} tables on the page")
+            
+            for i, table in enumerate(tables):
+                table_text = await table.text_content()
+                if any(term in table_text.lower() for term in ["annual", "quarterly", "financial", "report"]):
+                    print(f"Table {i} appears to contain financial data")
+                    break
+            else:
+                print("No table with financial data found")
+                return []
     except Exception as e:
         print(f"Could not find financial statements table: {e}")
-        return None
-    # Find the header row to get the years
+        return []
     header_cells = await page.query_selector_all("table thead tr th")
     years = []
     for cell in header_cells:
@@ -197,66 +217,81 @@ async def get_latest_annual_report(page: Page, symbol: str) -> Optional[Tuple[st
             years.append(int(text))
     if not years:
         print("No years found in table header.")
-        return None
-    
-    # Find the 'Annual' row
+        return []
     rows = await page.query_selector_all("table tbody tr")
-    annual_row = None
-    for row in rows:
-        first_cell = await row.query_selector("td")
-        if first_cell and (await first_cell.text_content()).strip().lower() == "annual":
-            annual_row = row
-            break
-    if not annual_row:
-        print("No 'Annual' row found in table.")
-        return None
+    print(f"Found {len(rows)} rows in financial statements table")
     
-    # Find the cells for all years in the 'Annual' row
-    annual_cells = await annual_row.query_selector_all("td")
-    # The first cell is the label, so offset by 1
-    # Go from left to right (most recent year to oldest)
-    for i, year in enumerate(years):
-        cell_index = i + 1  # offset by 1 for the label cell
-        if cell_index >= len(annual_cells):
-            continue
-        cell = annual_cells[cell_index]
-        pdf_link = await cell.query_selector("a[href$='.pdf']")
-        if pdf_link:
-            pdf_url = await pdf_link.get_attribute("href")
-            if pdf_url:
-                print(f"🎯 Found PDF URL for {symbol} {year} (most recent available): {pdf_url}")
-                return pdf_url, year
+    # Debug: Print all row contents to understand the structure
+    print("--- Table rows debug ---")
+    for i, row in enumerate(rows):
+        cells = await row.query_selector_all("td")
+        row_text = []
+        for j, cell in enumerate(cells):
+            cell_text = (await cell.text_content() or "").strip()
+            row_text.append(f"cell{j}: '{cell_text}'")
+        print(f"Row {i}: {row_text}")
+    print("--- End table debug ---")
     
-    print("No PDF link found in any year in 'Annual' row.")
-    return None
-
-async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year: int) -> bool:
-    """Download PDF using the working stealth approach from download_pdf_playwright.py."""
-    try:
-        # Create filename
-        filename = f"{symbol}_annual_{year}.pdf"
-        pdf_path = PDF_DIR / filename
+    statement_types = ["annual", "q1", "q2", "q3", "q4"]
+    found_reports = []
+    
+    for stype in statement_types:
+        row = None
+        # Search through all rows for this statement type
+        for r in rows:
+            first_cell = await r.query_selector("td")
+            if first_cell:
+                cell_text = (await first_cell.text_content() or "").strip().lower()
+                # More flexible matching
+                if stype in cell_text or any(term in cell_text for term in ["report", "statement"]):
+                    row = r
+                    print(f"Found row for {stype}: '{cell_text}'")
+                    break
         
-        # Check if already exists
+        if not row:
+            print(f"No '{stype}' row found in table.")
+            continue
+            
+        cells = await row.query_selector_all("td")
+        print(f"Row for {stype} has {len(cells)} cells")
+        
+        for i, year in enumerate(years):
+            cell_index = i + 1  # offset by 1 for the label cell
+            if cell_index >= len(cells):
+                continue
+            cell = cells[cell_index]
+            pdf_link = await cell.query_selector("a[href$='.pdf']")
+            if pdf_link:
+                pdf_url = await pdf_link.get_attribute("href")
+                if pdf_url:
+                    normalized_stype = stype.lower().strip()
+                    print(f"🎯 Found {normalized_stype.upper()} PDF URL for {symbol} {year}: {pdf_url}")
+                    found_reports.append((normalized_stype, year, pdf_url))
+    # Updated filter: Q1, Q2, Q3 of current year and Annual of previous year
+    filtered_reports = []
+    for stype, year, pdf_url in found_reports:
+        if year == target_year and stype in ["q1", "q2", "q3"]:
+            filtered_reports.append((stype, year, pdf_url))
+        elif year == target_year - 1 and stype == "annual":
+            filtered_reports.append((stype, year, pdf_url))
+    print(f"[DEBUG] Will download for {symbol}: {[f'{stype}_{year}' for stype, year, _ in filtered_reports]}")
+    return filtered_reports
+
+async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year: int, statement_type: str) -> bool:
+    """Download PDF using the working stealth approach, generalized for statement type."""
+    try:
+        filename = f"{symbol}_{statement_type}_{year}.pdf"
+        pdf_path = PDF_DIR / filename
         if pdf_path.exists():
             print(f"⚠️  {filename} already exists, skipping...")
             return True
-        
         print(f"📥 Downloading {filename}...")
-        
-        # Prepend base URL if needed
         if not pdf_url.startswith("http"):
             pdf_url = f"https://www.saudiexchange.sa{pdf_url}"
-        
-        # Navigate to PDF URL with stealth (from download_pdf_playwright.py)
         response = await page.goto(pdf_url, wait_until='networkidle')
-        
-        # Check if we got a PDF
         content_type = response.headers.get('content-type', '')
         if 'pdf' in content_type.lower():
             print(f"✅ Successfully accessed PDF for {symbol}")
-            
-            # Download PDF content using the working method
             pdf_content = await page.evaluate("""
                 async () => {
                     try {
@@ -269,7 +304,6 @@ async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year:
                     }
                 }
             """)
-            
             if pdf_content:
                 with open(pdf_path, 'wb') as f:
                     f.write(bytes(pdf_content))
@@ -281,60 +315,51 @@ async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year:
         else:
             print(f"❌ Did not get PDF content for {symbol} (Content-Type: {content_type})")
             return False
-            
     except Exception as e:
         print(f"❌ Download error for {symbol}: {e}")
         return False
 
 async def process_company_with_retry(browser: Browser, symbol: str, max_retries: int = 3) -> bool:
-    """Process a single company with retry logic."""
     for attempt in range(max_retries):
         try:
             page = await browser.new_page()
-            
-            # Add human-like behavior
             await page.mouse.move(random.randint(100, 500), random.randint(100, 300))
             await asyncio.sleep(random.uniform(0.5, 1.5))
-            
-            # Find latest financial statement using working navigation
-            result = await get_latest_annual_report(page, symbol)
-            if not result:
+            reports = await get_all_financial_reports(page, symbol)
+            if not reports:
                 await page.close()
                 if attempt < max_retries - 1:
                     print(f"🔄 Retrying {symbol} (attempt {attempt + 2}/{max_retries})...")
                     await asyncio.sleep(random.uniform(2, 5))
                     continue
                 return False
-            
-            pdf_url, year = result
-            
-            # Download the PDF using working stealth method
-            success = await download_pdf_with_stealth(page, pdf_url, symbol, year)
+            all_success = True
+            for stype, year, pdf_url in reports:
+                success = await download_pdf_with_stealth(page, pdf_url, symbol, year, stype)
+                if not success:
+                    all_success = False
             await page.close()
-            
-            if success:
+            if all_success:
                 return True
             elif attempt < max_retries - 1:
                 print(f"🔄 Retrying {symbol} (attempt {attempt + 2}/{max_retries})...")
                 await asyncio.sleep(random.uniform(2, 5))
-            
         except Exception as e:
             print(f"❌ Error processing {symbol} (attempt {attempt + 1}): {e}")
             await page.close()
             if attempt < max_retries - 1:
                 await asyncio.sleep(random.uniform(2, 5))
-    
     return False
 
 async def download_all_financial_statements():
     """Download the most recent financial statements for all companies."""
     # Get company symbols from JSON file
     companies = get_company_symbols_from_json()
-    
+    # companies = ["2030"]  # Test with a single company
     if not companies:
         print("❌ No company symbols found. Please run the ownership scraper first.")
         return
-    
+
     print(f"📋 Found {len(companies)} companies to process")
     
     # Setup browser with stealth configuration
@@ -377,24 +402,22 @@ async def download_all_financial_statements():
         await playwright.stop()
 
 if __name__ == "__main__":
-    # Uncomment to download all reports
+    # Uncomment to download all reports for all companies
     asyncio.run(download_all_financial_statements())
-    # # Test with a single company first
+    
+    # Comment out the test function when running all companies
     # async def test_single_company():
-    #     session = SessionLocal()
+    #     # Test with the company we know has data
+    #     symbol = "2030"
+    #     print(f"🧪 Testing with {symbol} to verify new filtering...")
+    #     
+    #     playwright, browser, context = await setup_stealth_browser()
     #     try:
-    #         # Test with SABIC
-    #         symbol = "2010"
-    #         print(f"🧪 Testing with {symbol}...")
-    #         
-    #         playwright, browser, context = await setup_stealth_browser()
-    #         try:
-    #             success = await process_company_with_retry(browser, symbol)
-    #             print(f"Test result: {'✅ SUCCESS' if success else '❌ FAILED'}")
-    #         finally:
+    #         success = await process_company_with_retry(browser, symbol)
+    #         print(f"Test result: {'✅ SUCCESS' if success else '❌ FAILED'}")
+    #     finally:
     #             await browser.close()
     #             await playwright.stop()
-    #     finally:
-    #         session.close()
+    # 
     # # Run the test
     # asyncio.run(test_single_company()) 
