@@ -956,26 +956,29 @@ function App() {
                   size="small" 
                   onClick={(e) => {
                     e.stopPropagation();
-                    // For previous quarter, we need to determine the actual quarter
                     let evidenceQuarter;
                     if (quarterFilter === "Q1") {
-                      evidenceQuarter = "Annual_2024"; // Previous quarter for Q1 is Annual 2024 (not Q4 2024)
+                      evidenceQuarter = "Annual_2024"; // Corrected from Q4_2024
                     } else if (quarterFilter === "Q2") {
-                      evidenceQuarter = "Q1_2025"; // Previous quarter for Q2 is Q1 2025
+                      evidenceQuarter = "Q1_2025";
                     } else if (quarterFilter === "Q3") {
-                      evidenceQuarter = "Q2_2025"; // Previous quarter for Q3 is Q2 2025
+                      evidenceQuarter = "Q2_2025";
                     } else {
-                      evidenceQuarter = "Q3_2025"; // Previous quarter for Q4 is Q3 2025
+                      evidenceQuarter = "Q3_2025";
                     }
                     fetchEvidenceData(params.row.symbol, evidenceQuarter);
                     setEvidenceModalOpen(true);
                   }}
                   sx={{ 
                     color: '#1e6641',
-                    '&:hover': { bgcolor: '#e8f5ee' }
+                    '&:hover': { bgcolor: '#e8f5ee' },
+                    padding: '8px',
+                    minWidth: '40px',
+                    width: '40px',
+                    height: '40px'
                   }}
                 >
-                  <VisibilityIcon fontSize="small" />
+                  <VisibilityIcon sx={{ fontSize: '16px' }} />
                 </IconButton>
               </Tooltip>
             </Box>
@@ -1021,10 +1024,14 @@ function App() {
                   }}
                   sx={{ 
                     color: '#1e6641',
-                    '&:hover': { bgcolor: '#e8f5ee' }
+                    '&:hover': { bgcolor: '#e8f5ee' },
+                    padding: '8px',
+                    minWidth: '40px',
+                    width: '40px',
+                    height: '40px'
                   }}
                 >
-                  <VisibilityIcon fontSize="small" />
+                  <VisibilityIcon sx={{ fontSize: '16px' }} />
                 </IconButton>
               </Tooltip>
             </Box>
@@ -1407,25 +1414,6 @@ function App() {
           </Box>
         </Box>
         <Box sx={{ display: "flex", gap: 2, alignItems: "center", mb: 2 }}>
-            <TextField
-              label="البحث في الجدول"
-              variant="outlined"
-              size="small"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              sx={{
-                minWidth: 300,
-                "& .MuiOutlinedInput-root": {
-                  borderRadius: 2,
-                  "& fieldset": { borderColor: "#e0e0e0" },
-                  "&:hover fieldset": { borderColor: "#1e6641" },
-                  "&:focus fieldset": { borderColor: "#1e6641" },
-                },
-                "& .MuiInputLabel-root": { color: "#666" },
-                "& .MuiInputLabel-root.Mui-focused": { color: "#1e6641" },
-              }}
-            />
-            
             {/* Quarter Filter Dropdown */}
             <TextField
               select
