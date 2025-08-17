@@ -215,6 +215,7 @@ async def main():
     parser.add_argument("--frequency", type=int, help="Set update frequency in days")
     parser.add_argument("--enable-auto", action="store_true", help="Enable auto-updates")
     parser.add_argument("--disable-auto", action="store_true", help="Disable auto-updates")
+    parser.add_argument("--archive", action="store_true", help="Run quarterly archive process only")
     
     args = parser.parse_args()
     
@@ -234,6 +235,23 @@ async def main():
     
     if args.disable_auto:
         scheduler.toggle_auto_update(False)
+        return
+    
+    if args.archive:
+        logger.info("📁 Running quarterly archive process...")
+        try:
+            from utils.quarterly_archiver import QuarterlyArchiver
+            archiver = QuarterlyArchiver()
+            result = archiver.run_full_archive_process()
+            
+            if result["success"]:
+                print("✅ Quarterly archive completed successfully!")
+                print(f"📁 Quarters archived: {result['quarters_archived']}")
+                print(f"📊 Total archives: {result['total_archives']}")
+            else:
+                print("❌ Quarterly archive failed!")
+        except Exception as e:
+            print(f"❌ Error running archive: {e}")
         return
     
     if args.force:

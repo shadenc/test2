@@ -12,6 +12,11 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
 import random
+import pandas as pd
+import sys
+
+# Add the src directory to Python path for imports
+sys.path.append(str(Path(__file__).parent.parent))
 
 from playwright.async_api import async_playwright, Browser, Page
 
@@ -352,6 +357,21 @@ class QuarterlyUpdateOrchestrator:
         # Step 4: Update net profit data
         net_profit_results = await self.update_net_profit_data(symbols)
         
+        # Step 5: Generate dashboard export for current quarter
+        logger.info("📊 Generating dashboard export for current quarter...")
+        dashboard_export_path = await self.generate_dashboard_export()
+        
+        # Step 6: Archive dashboard exports by quarter
+        logger.info("📁 Archiving dashboard exports by quarter...")
+        try:
+            from utils.quarterly_archiver import QuarterlyArchiver
+            archiver = QuarterlyArchiver()
+            archive_result = archiver.run_full_archive_process()
+            logger.info(f"📁 Archive result: {archive_result.get('quarters_archived', 0)} quarters archived")
+        except Exception as e:
+            logger.warning(f"⚠️  Archive process failed: {e}")
+            archive_result = {"success": False, "error": str(e)}
+        
         # Summary
         end_time = datetime.now()
         duration = end_time - start_time
@@ -364,7 +384,10 @@ class QuarterlyUpdateOrchestrator:
             "pdf_updates": pdf_results,
             "net_profit_updates": net_profit_results,
             "total_new_pdfs": sum(len(quarters) for quarters in pdf_results.values()),
-            "total_new_quarters": sum(len(quarters) for quarters in net_profit_results.values())
+            "total_new_quarters": sum(len(quarters) for quarters in net_profit_results.values()),
+            "dashboard_export": dashboard_export_path,
+            "quarterly_archives": self._get_quarterly_archive_info(),
+            "archive_result": archive_result
         }
         
         # Save update summary
@@ -377,8 +400,95 @@ class QuarterlyUpdateOrchestrator:
         logger.info(f"📊 Companies: {len(symbols)}")
         logger.info(f"📁 New PDFs: {summary['total_new_pdfs']}")
         logger.info(f"📈 New Quarters: {summary['total_new_quarters']}")
+        if dashboard_export_path:
+            logger.info(f"📊 Dashboard Export: {dashboard_export_path}")
+        else:
+            logger.warning("⚠️  Dashboard export failed")
         
         return summary
+    
+    async def generate_dashboard_export(self, quarter_filter: str = None) -> Optional[str]:
+        """Generate dashboard export for the current quarter."""
+        try:
+            logger.info("📊 Generating dashboard export...")
+            
+            # Determine quarter filter if not provided
+            if not quarter_filter:
+                quarter_filter = self.current_quarter
+            
+            # Import the export functionality
+            try:
+                from utils.export_to_excel import ExcelExporter
+                from api.evidence_api import generate_dashboard_data
+            except ImportError as e:
+                logger.error(f"❌ Import error: {e}")
+                return None
+            
+            # Generate dashboard data
+            dashboard_data = generate_dashboard_data(quarter_filter)
+            
+            if dashboard_data is None or dashboard_data.empty:
+                logger.warning("⚠️  No dashboard data generated")
+                return None
+            
+            # Create exporter and export
+            output_dir = Path("output/excel")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            exporter = ExcelExporter(output_dir)
+            output_path = exporter.export_dashboard_table(dashboard_data)
+            
+            if output_path:
+                logger.info(f"✅ Dashboard export generated: {output_path}")
+                
+                # Create quarterly archive
+                archive_dir = Path("output/archives") / f"{self.current_year}_{quarter_filter}"
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Copy to archive with quarter-specific naming
+                archive_file = archive_dir / f"financial_analysis_{self.current_year}_{quarter_filter}.xlsx"
+                import shutil
+                shutil.copy2(output_path, archive_file)
+                logger.info(f"📁 Archived to: {archive_file}")
+                
+                return str(output_path)
+            else:
+                logger.error("❌ Failed to generate dashboard export")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error generating dashboard export: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _get_quarterly_archive_info(self) -> Dict:
+        """Get information about existing quarterly archives."""
+        archives_dir = Path("output/archives")
+        if not archives_dir.exists():
+            return {}
+        
+        archive_info = {}
+        for quarter_dir in sorted(archives_dir.iterdir()):
+            if quarter_dir.is_dir():
+                # Extract year and quarter from folder name (e.g., 2025_Q3)
+                if '_Q' in quarter_dir.name:
+                    year, quarter = quarter_dir.name.split('_Q')
+                    quarter_key = f"Q{quarter}"
+                    
+                    # Find the Excel file
+                    excel_files = list(quarter_dir.glob("financial_analysis_*.xlsx"))
+                    if excel_files:
+                        latest_file = max(excel_files, key=lambda x: x.stat().st_mtime)
+                        archive_info[quarter_key] = {
+                            "year": int(year),
+                            "quarter": quarter_key,
+                            "file_path": str(latest_file),
+                            "last_modified": datetime.fromtimestamp(latest_file.stat().st_mtime).isoformat(),
+                            "file_size": latest_file.stat().st_size
+                        }
+        
+        return archive_info
 
 async def main():
     """Main function to run the quarterly update."""
