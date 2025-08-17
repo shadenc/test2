@@ -60,7 +60,13 @@ def export_quarterly_dashboard(quarter_filter):
                     earnings_map[symbol] = {}
                 earnings_map[symbol][quarter] = {
                     'retained_earnings': row.get('current_value', 'لا يوجد'),
-                    'reinvested_earnings': row.get('reinvested_earnings_flow', 'لا يوجد')
+                    'previous_value': row.get('previous_value', 'لا يوجد'),
+                    'flow': row.get('flow', 'لا يوجد'),
+                    'flow_formula': row.get('flow_formula', 'لا يوجد'),
+                    'year': row.get('year', ''),
+                    'reinvested_earnings_flow': row.get('reinvested_earnings_flow', 'لا يوجد'),
+                    'net_profit_foreign_investor': row.get('net_profit_foreign_investor', 'لا يوجد'),
+                    'distributed_profits_foreign_investor': row.get('distributed_profits_foreign_investor', 'لا يوجد')
                 }
         
         # Load net profit data
@@ -91,17 +97,23 @@ def export_quarterly_dashboard(quarter_filter):
                 if quarter_key in quarterly_data:
                     net_profit = quarterly_data[quarter_key]
             
-            # Create row
+            # Create row with ALL columns from the dashboard
             row = {
                 'رمز الشركة': symbol,
                 'الشركة': company_name,
                 'ملكية جميع المستثمرين الأجانب': company.get('foreign_ownership', ''),
                 'الملكية الحالية': company.get('max_allowed', ''),
                 'ملكية المستثمر الاستراتيجي الأجنبي': company.get('investor_limit', ''),
-                'الأرباح المبقاة': earnings_info.get('retained_earnings', 'لا يوجد'),
-                'الأرباح المعاد استثمارها': earnings_info.get('reinvested_earnings', 'لا يوجد'),
+                'الأرباح المبقاة للربع السابق': earnings_info.get('previous_value', 'لا يوجد'),
+                'الأرباح المبقاة للربع الحالي': earnings_info.get('retained_earnings', 'لا يوجد'),
+                'حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)': earnings_info.get('flow', 'لا يوجد'),
+                'تدفق الأرباح المبقاة للمستثمر الأجنبي': earnings_info.get('reinvested_earnings_flow', 'لا يوجد'),
                 'صافي الربح': net_profit,
-                'الربع': quarter_filter
+                'صافي الربح للمستثمر الأجنبي': earnings_info.get('net_profit_foreign_investor', 'لا يوجد'),
+                'الأرباح الموزعة للمستثمر الأجنبي': earnings_info.get('distributed_profits_foreign_investor', 'لا يوجد'),
+                'الربع': quarter_filter,
+                'السنة': earnings_info.get('year', ''),
+                'صيغة التدفق': earnings_info.get('flow_formula', '')
             }
             dashboard_data.append(row)
         
