@@ -36,6 +36,15 @@ import ExpandMore from '@mui/icons-material/ExpandMore';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import MenuItem from '@mui/material/MenuItem';
 import EditIcon from '@mui/icons-material/Edit';
+import AddIcon from '@mui/icons-material/Add';
+import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import Chip from '@mui/material/Chip';
+import FormControl from '@mui/material/FormControl';
+import Select from '@mui/material/Select';
+import InputLabel from '@mui/material/InputLabel';
+import OutlinedInput from '@mui/material/OutlinedInput';
 
 // Evidence Modal Component
 const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpdate }) => {
@@ -620,6 +629,20 @@ function App() {
   const [selectedExports, setSelectedExports] = useState(new Set());
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [netProfitData, setNetProfitData] = useState({});
+  
+  // Enhanced Time Management System
+  const [customTimePeriods, setCustomTimePeriods] = useState([]);
+  const [addTimePeriodModalOpen, setAddTimePeriodModalOpen] = useState(false);
+  const [editTimePeriodModalOpen, setEditTimePeriodModalOpen] = useState(false);
+  const [selectedTimePeriod, setSelectedTimePeriod] = useState(null);
+  const [newTimePeriod, setNewTimePeriod] = useState({
+    name: '',
+    type: 'custom', // 'quarterly', 'monthly', 'weekly', 'custom'
+    startDate: '',
+    endDate: '',
+    description: '',
+    color: '#1e6641'
+  });
   // Commented out since we're using inline editing
   // const [editModalOpen, setEditModalOpen] = useState(false);
   // const [editData, setEditData] = useState(null);
@@ -719,6 +742,88 @@ function App() {
       setSelectedExports(new Set(userExports.map(file => file.filename)));
     } else {
       setSelectedExports(new Set());
+    }
+  };
+
+  // Function to add custom time period
+  const handleAddTimePeriod = () => {
+    if (!newTimePeriod.name || !newTimePeriod.startDate || !newTimePeriod.endDate) {
+      alert('يرجى ملء جميع الحقول المطلوبة');
+      return;
+    }
+    
+    const period = {
+      id: Date.now().toString(),
+      ...newTimePeriod,
+      createdAt: new Date().toISOString()
+    };
+    
+    setCustomTimePeriods(prev => [...prev, period]);
+    setNewTimePeriod({
+      name: '',
+      type: 'custom',
+      startDate: '',
+      endDate: '',
+      description: '',
+      color: '#1e6641'
+    });
+    setAddTimePeriodModalOpen(false);
+  };
+
+  // Function to edit time period
+  const handleEditTimePeriod = () => {
+    if (!selectedTimePeriod) return;
+    
+    setCustomTimePeriods(prev => 
+      prev.map(p => p.id === selectedTimePeriod.id ? selectedTimePeriod : p)
+    );
+    setEditTimePeriodModalOpen(false);
+    setSelectedTimePeriod(null);
+  };
+
+  // Function to delete time period
+  const handleDeleteTimePeriod = (periodId) => {
+    if (window.confirm('هل أنت متأكد من حذف هذه الفترة الزمنية؟')) {
+      setCustomTimePeriods(prev => prev.filter(p => p.id !== periodId));
+    }
+  };
+
+  // Function to export data for specific time period
+  const handleExportForTimePeriod = async (period) => {
+    try {
+      const response = await fetch(`http://localhost:5002/api/export_excel?quarter=${quarterFilter}&start_date=${period.startDate}&end_date=${period.endDate}&period_name=${period.name}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      // Get the filename from the response headers
+      const contentDisposition = response.headers.get('content-disposition');
+      let filename = `dashboard_${period.name}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      // Create blob and download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      // Refresh user exports
+      fetchUserExports();
+      
+      alert(`تم تصدير البيانات للفترة: ${period.name}`);
+    } catch (error) {
+      console.error('Error exporting for time period:', error);
+      alert('فشل في تصدير البيانات: ' + error.message);
     }
   };
 
@@ -1713,6 +1818,180 @@ function App() {
         </DialogActions>
       </Dialog>
 
+      {/* Add Time Period Modal */}
+      <Dialog open={addTimePeriodModalOpen} onClose={() => setAddTimePeriodModalOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700, color: '#1e6641', textAlign: 'center' }}>
+          إضافة فترة زمنية جديدة
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, pt: 2 }}>
+            <TextField
+              label="اسم الفترة"
+              value={newTimePeriod.name}
+              onChange={(e) => setNewTimePeriod(prev => ({ ...prev, name: e.target.value }))}
+              placeholder="مثال: شهر رمضان 2025"
+              fullWidth
+              size="small"
+            />
+            
+            <FormControl fullWidth size="small">
+              <InputLabel>نوع الفترة</InputLabel>
+              <Select
+                value={newTimePeriod.type}
+                onChange={(e) => setNewTimePeriod(prev => ({ ...prev, type: e.target.value }))}
+                label="نوع الفترة"
+              >
+                <MenuItem value="quarterly">ربع سنوي</MenuItem>
+                <MenuItem value="monthly">شهري</MenuItem>
+                <MenuItem value="weekly">أسبوعي</MenuItem>
+                <MenuItem value="custom">مخصص</MenuItem>
+              </Select>
+            </FormControl>
+            
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              <TextField
+                label="تاريخ البداية"
+                type="date"
+                value={newTimePeriod.startDate}
+                onChange={(e) => setNewTimePeriod(prev => ({ ...prev, startDate: e.target.value }))}
+                fullWidth
+                size="small"
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                label="تاريخ النهاية"
+                type="date"
+                value={newTimePeriod.endDate}
+                onChange={(e) => setNewTimePeriod(prev => ({ ...prev, endDate: e.target.value }))}
+                fullWidth
+                size="small"
+                InputLabelProps={{ shrink: true }}
+              />
+            </Box>
+            
+            <TextField
+              label="وصف (اختياري)"
+              value={newTimePeriod.description}
+              onChange={(e) => setNewTimePeriod(prev => ({ ...prev, description: e.target.value }))}
+              placeholder="وصف مختصر للفترة"
+              fullWidth
+              size="small"
+              multiline
+              rows={2}
+            />
+            
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Typography sx={{ fontSize: 14, color: '#666' }}>لون الفترة:</Typography>
+              <input
+                type="color"
+                value={newTimePeriod.color}
+                onChange={(e) => setNewTimePeriod(prev => ({ ...prev, color: e.target.value }))}
+                style={{ width: 40, height: 40, border: 'none', borderRadius: 4, cursor: 'pointer' }}
+              />
+            </Box>
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          <Button onClick={() => setAddTimePeriodModalOpen(false)} sx={{ color: '#666' }}>
+            إلغاء
+          </Button>
+          <Button 
+            onClick={handleAddTimePeriod} 
+            variant="contained"
+            sx={{ bgcolor: '#1e6641', '&:hover': { bgcolor: '#14532d' } }}
+          >
+            إضافة الفترة
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit Time Period Modal */}
+      <Dialog open={editTimePeriodModalOpen} onClose={() => setEditTimePeriodModalOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700, color: '#1e6641', textAlign: 'center' }}>
+          تعديل الفترة الزمنية
+        </DialogTitle>
+        <DialogContent>
+          {selectedTimePeriod && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, pt: 2 }}>
+              <TextField
+                label="اسم الفترة"
+                value={selectedTimePeriod.name}
+                onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, name: e.target.value }))}
+                fullWidth
+                size="small"
+              />
+              
+              <FormControl fullWidth size="small">
+                <InputLabel>نوع الفترة</InputLabel>
+                <Select
+                  value={selectedTimePeriod.type}
+                  onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, type: e.target.value }))}
+                  label="نوع الفترة"
+                >
+                  <MenuItem value="quarterly">ربع سنوي</MenuItem>
+                  <MenuItem value="monthly">شهري</MenuItem>
+                  <MenuItem value="weekly">أسبوعي</MenuItem>
+                  <MenuItem value="custom">مخصص</MenuItem>
+                </Select>
+              </FormControl>
+              
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <TextField
+                  label="تاريخ البداية"
+                  type="date"
+                  value={selectedTimePeriod.startDate}
+                  onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, startDate: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  InputLabelProps={{ shrink: true }}
+                />
+                <TextField
+                  label="تاريخ النهاية"
+                  type="date"
+                  value={selectedTimePeriod.endDate}
+                  onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, endDate: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Box>
+              
+              <TextField
+                label="وصف (اختياري)"
+                value={selectedTimePeriod.description}
+                onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, description: e.target.value }))}
+                fullWidth
+                size="small"
+                multiline
+                rows={2}
+              />
+              
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Typography sx={{ fontSize: 14, color: '#666' }}>لون الفترة:</Typography>
+                <input
+                  type="color"
+                  value={selectedTimePeriod.color}
+                  onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, color: e.target.value }))}
+                  style={{ width: 40, height: 40, border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                />
+              </Box>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          <Button onClick={() => setEditTimePeriodModalOpen(false)} sx={{ color: '#666' }}>
+            إلغاء
+          </Button>
+          <Button 
+            onClick={handleEditTimePeriod} 
+            variant="contained"
+            sx={{ bgcolor: '#1e6641', '&:hover': { bgcolor: '#14532d' } }}
+          >
+            حفظ التعديلات
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Sidebar Drawer */}
       <Drawer
         anchor="left"
@@ -2101,7 +2380,7 @@ function App() {
             ))
           )}
         </List>
-        {/* Modern Quarterly Archive Header */}
+        {/* Enhanced Time Management System Header */}
         <Box sx={{ px: 3, mb: 3, mt: 4 }}>
           <Box sx={{
             display: 'flex',
@@ -2124,48 +2403,106 @@ function App() {
               background: 'linear-gradient(90deg, #f59e0b 0%, #d97706 100%)',
             }
           }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Box sx={{
-                width: 40,
-                height: 40,
-                bgcolor: '#f59e0b',
-                borderRadius: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 4px 12px rgba(245,158,11,0.3)'
-              }}>
-                <Box sx={{ 
-                  width: 20, 
-                  height: 20, 
-                  bgcolor: 'white', 
-                  borderRadius: 1,
+            {/* Header Row */}
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Box sx={{
+                  width: 40,
+                  height: 40,
+                  bgcolor: '#f59e0b',
+                  borderRadius: '12px',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center'
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 12px rgba(245,158,11,0.3)'
                 }}>
-                  <Typography sx={{ color: '#f59e0b', fontSize: 12, fontWeight: 700 }}>
-                    Q
+                  <AccessTimeIcon sx={{ color: 'white', fontSize: 20 }} />
+                </Box>
+                <Box>
+                  <Typography sx={{
+                    fontWeight: 800,
+                    color: '#92400e',
+                    fontSize: 18,
+                    mb: 0.5
+                  }}>
+                    إدارة الفترات الزمنية
+                  </Typography>
+                  <Typography sx={{
+                    color: '#a16207',
+                    fontSize: 13,
+                    fontWeight: 500
+                  }}>
+                    {snapshots.length + customTimePeriods.length} فترة محفوظة
                   </Typography>
                 </Box>
               </Box>
-              <Box>
-                <Typography sx={{
-                  fontWeight: 800,
-                  color: '#92400e',
-                  fontSize: 18,
-                  mb: 0.5
-                }}>
-                  أرشيف الفترات الربعية
-                </Typography>
-                <Typography sx={{
-                  color: '#a16207',
+              
+              {/* Add New Time Period Button */}
+              <Button
+                variant="contained"
+                size="small"
+                onClick={() => setAddTimePeriodModalOpen(true)}
+                sx={{
+                  bgcolor: '#f59e0b',
+                  color: 'white',
+                  borderRadius: 2,
+                  textTransform: 'none',
+                  px: 2,
+                  py: 1,
                   fontSize: 13,
-                  fontWeight: 500
-                }}>
-                  {snapshots.length} فترة محفوظة
-                </Typography>
-              </Box>
+                  fontWeight: 600,
+                  boxShadow: '0 2px 8px rgba(245,158,11,0.3)',
+                  '&:hover': { 
+                    bgcolor: '#d97706',
+                    boxShadow: '0 4px 12px rgba(245,158,11,0.4)'
+                  }
+                }}
+                startIcon={<AddIcon sx={{ fontSize: 16 }} />}
+              >
+                إضافة فترة جديدة
+              </Button>
+            </Box>
+            
+            {/* Time Period Type Tabs */}
+            <Box sx={{ 
+              display: 'flex', 
+              gap: 1, 
+              pt: 1,
+              borderTop: '1px solid #fed7aa'
+            }}>
+              <Chip
+                label="جميع الفترات"
+                size="small"
+                sx={{
+                  bgcolor: 'white',
+                  color: '#92400e',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  '&:hover': { bgcolor: '#fef3c7' }
+                }}
+              />
+              <Chip
+                label="ربع سنوي"
+                size="small"
+                sx={{
+                  bgcolor: 'white',
+                  color: '#92400e',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  '&:hover': { bgcolor: '#fef3c7' }
+                }}
+              />
+              <Chip
+                label="مخصص"
+                size="small"
+                sx={{
+                  bgcolor: 'white',
+                  color: '#92400e',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  '&:hover': { bgcolor: '#fef3c7' }
+                }}
+              />
             </Box>
           </Box>
         </Box>
@@ -2354,6 +2691,245 @@ function App() {
             ))
           )}
         </List>
+        
+        {/* Custom Time Periods List */}
+        {customTimePeriods.length > 0 && (
+          <>
+            <Box sx={{ px: 3, mb: 2, mt: 3 }}>
+              <Typography sx={{
+                fontWeight: 600,
+                color: '#92400e',
+                fontSize: 16,
+                mb: 2
+              }}>
+                الفترات المخصصة ({customTimePeriods.length})
+              </Typography>
+            </Box>
+            
+            <List>
+              {customTimePeriods.map((period) => (
+                <ListItem key={period.id} sx={{ 
+                  mx: 2,
+                  mb: 2,
+                  bgcolor: 'white',
+                  borderRadius: 3,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  minHeight: 72,
+                  border: `1px solid ${period.color}20`,
+                  transition: 'all 0.2s ease',
+                  cursor: 'pointer',
+                  '&:hover': {
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+                    transform: 'translateY(-1px)',
+                    borderColor: period.color,
+                  },
+                }}>
+                  {/* Period Icon */}
+                  <Box sx={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    width: 48,
+                    height: 48,
+                    mr: 2
+                  }}>
+                    <Box sx={{
+                      width: 36,
+                      height: 36,
+                      bgcolor: `${period.color}20`,
+                      borderRadius: 2,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: `1px solid ${period.color}40`
+                    }}>
+                      <CalendarTodayIcon sx={{ 
+                        color: period.color, 
+                        fontSize: 18 
+                      }} />
+                    </Box>
+                  </Box>
+                  
+                  {/* Period Info */}
+                  <Box sx={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 2,
+                    flexGrow: 1 
+                  }}>
+                    <Box sx={{
+                      width: 44,
+                      height: 44,
+                      bgcolor: `${period.color}10`,
+                      borderRadius: 2,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: `1px solid ${period.color}30`
+                    }}>
+                      <Chip
+                        label={period.type === 'quarterly' ? 'ربع' : period.type === 'monthly' ? 'شهر' : period.type === 'weekly' ? 'أسبوع' : 'مخصص'}
+                        size="small"
+                        sx={{
+                          bgcolor: period.color,
+                          color: 'white',
+                          fontSize: 10,
+                          fontWeight: 700,
+                          height: 20
+                        }}
+                      />
+                    </Box>
+                    
+                    <Box sx={{ flexGrow: 1 }}>
+                      <Typography sx={{ 
+                        fontWeight: 600, 
+                        color: '#1e293b', 
+                        fontSize: 15,
+                        mb: 0.5
+                      }}>
+                        {period.name}
+                      </Typography>
+                      <Typography sx={{ 
+                        color: '#64748b', 
+                        fontSize: 12,
+                        fontWeight: 500
+                      }}>
+                        {period.startDate} - {period.endDate}
+                        {period.description && ` • ${period.description}`}
+                      </Typography>
+                    </Box>
+                  </Box>
+                  
+                  {/* Action Buttons */}
+                  <Box sx={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 1,
+                    opacity: 0,
+                    transition: 'opacity 0.2s ease',
+                    '.MuiListItem-root:hover &': { opacity: 1 }
+                  }}>
+                    <Tooltip title="تصدير البيانات" arrow placement="top">
+                      <IconButton
+                        aria-label="تصدير"
+                        onClick={() => handleExportForTimePeriod(period)}
+                        sx={{
+                          color: period.color,
+                          bgcolor: `${period.color}10`,
+                          borderRadius: 2,
+                          p: 1,
+                          transition: 'all 0.2s ease',
+                          border: `1px solid ${period.color}30`,
+                          '&:hover': {
+                            bgcolor: period.color,
+                            color: 'white',
+                            transform: 'scale(1.05)',
+                            boxShadow: `0 4px 12px ${period.color}40`
+                          }
+                        }}
+                      >
+                        <FileDownloadIcon sx={{ fontSize: 18 }} />
+                      </IconButton>
+                    </Tooltip>
+                    
+                    <Tooltip title="تعديل الفترة" arrow placement="top">
+                      <IconButton
+                        aria-label="تعديل"
+                        onClick={() => {
+                          setSelectedTimePeriod(period);
+                          setEditTimePeriodModalOpen(true);
+                        }}
+                        sx={{
+                          color: '#64748b',
+                          bgcolor: '#f1f5f9',
+                          borderRadius: 2,
+                          p: 1,
+                          transition: 'all 0.2s ease',
+                          border: '1px solid #e2e8f0',
+                          '&:hover': {
+                            bgcolor: '#64748b',
+                            color: 'white',
+                            transform: 'scale(1.05)',
+                            boxShadow: '0 4px 12px rgba(100,116,139,0.3)'
+                          }
+                        }}
+                      >
+                        <EditIcon sx={{ fontSize: 18 }} />
+                      </IconButton>
+                    </Tooltip>
+                    
+                    <Tooltip title="حذف الفترة" arrow placement="top">
+                      <IconButton
+                        aria-label="حذف"
+                        onClick={() => handleDeleteTimePeriod(period.id)}
+                        sx={{
+                          color: '#ef4444',
+                          bgcolor: '#fef2f2',
+                          borderRadius: 2,
+                          p: 1,
+                          transition: 'all 0.2s ease',
+                          border: '1px solid #fecaca',
+                          '&:hover': {
+                            bgcolor: '#ef4444',
+                            color: 'white',
+                            transform: 'scale(1.05)',
+                            boxShadow: '0 4px 12px rgba(239,68,68,0.3)'
+                          }
+                        }}
+                      >
+                        <DeleteOutlineIcon sx={{ fontSize: 18 }} />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
+                </ListItem>
+              ))}
+            </List>
+          </>
+        )}
+        
+        {/* Empty State for Custom Time Periods */}
+        {customTimePeriods.length === 0 && (
+          <Box sx={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            py: 4,
+            px: 3
+          }}>
+            <Box sx={{
+              width: 48,
+              height: 48,
+              bgcolor: '#fef7ed',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              mb: 2
+            }}>
+              <AccessTimeIcon sx={{ color: '#f59e0b', fontSize: 24 }} />
+            </Box>
+            <Typography sx={{ 
+              color: '#92400e', 
+              fontSize: 14, 
+              fontWeight: 600,
+              textAlign: 'center',
+              mb: 1
+            }}>
+              لا توجد فترات مخصصة بعد
+            </Typography>
+            <Typography sx={{ 
+              color: '#a16207', 
+              fontSize: 12, 
+              textAlign: 'center',
+              maxWidth: 200
+            }}>
+              انقر على "إضافة فترة جديدة" لإنشاء فترات زمنية مخصصة
+            </Typography>
+          </Box>
+        )}
       </Drawer>
     </Box>
   );
