@@ -745,26 +745,50 @@ function App() {
   const handleBulkDelete = async () => {
     if (selectedExports.size === 0) return;
     
+    console.log('Starting bulk delete for files:', Array.from(selectedExports));
+    console.log('Current userExports:', userExports);
+    
     try {
-      const deletePromises = Array.from(selectedExports).map(fileId => {
-        const file = userExports.find(f => f.id === fileId);
-        // Extract filename from download_url (e.g., /user_exports/filename.xlsx -> filename.xlsx)
-        const filename = file.download_url.split('/').pop();
-        return fetch(`http://localhost:5002/api/user_exports/${filename}`, { method: 'DELETE' });
+      const deletePromises = Array.from(selectedExports).map(filename => {
+        console.log(`Processing delete for filename: ${filename}`);
+        
+        // Find the file by filename
+        const file = userExports.find(f => f.filename === filename);
+        if (!file) {
+          console.error(`File not found: ${filename}`);
+          return Promise.reject(new Error(`File not found: ${filename}`));
+        }
+        
+        console.log(`Found file:`, file);
+        
+        return fetch(`http://localhost:5002/api/user_exports/${filename}`, { method: 'DELETE' })
+          .then(response => {
+            console.log(`Delete response for ${filename}:`, response.status, response.statusText);
+            if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+          });
       });
       
-      await Promise.all(deletePromises);
+      console.log('Delete promises created:', deletePromises.length);
+      const results = await Promise.all(deletePromises);
+      console.log('Delete results:', results);
       
       // Remove deleted files from state
-      setUserExports(prev => prev.filter(file => !selectedExports.has(file.id)));
+      setUserExports(prev => prev.filter(file => !selectedExports.has(file.filename)));
       setSelectedExports(new Set());
       setBulkDeleteDialogOpen(false);
       
       // Refresh the list
       fetchUserExports();
+      
+      // Show success message
+      alert(`تم حذف ${selectedExports.size} ملفات بنجاح`);
+      
     } catch (error) {
       console.error('Error deleting files:', error);
-      alert('حدث خطأ أثناء حذف الملفات');
+      alert('حدث خطأ أثناء حذف الملفات: ' + error.message);
     }
   };
 
@@ -1694,7 +1718,7 @@ function App() {
         anchor="left"
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        PaperProps={{ sx: { width: 340, bgcolor: '#f8f9fa', borderTopRightRadius: 16, borderBottomRightRadius: 16 } }}
+        PaperProps={{ sx: { width: 420, bgcolor: '#f8f9fa', borderTopRightRadius: 16, borderBottomRightRadius: 16 } }}
       >
         <Box
           sx={{
@@ -1745,8 +1769,8 @@ function App() {
         <Box sx={{ px: 3, mb: 3 }}>
           <Box sx={{
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
+            flexDirection: 'column',
+            gap: 2,
             bgcolor: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)',
             borderRadius: 3,
             p: 2.5,
@@ -1764,6 +1788,7 @@ function App() {
               background: 'linear-gradient(90deg, #1e6641 0%, #10b981 100%)',
             }
           }}>
+            {/* Header Row */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <Box sx={{
                 width: 40,
@@ -1796,9 +1821,15 @@ function App() {
               </Box>
             </Box>
             
-            {/* Modern Selection Controls */}
+            {/* Selection Controls Row */}
             {userExports.length > 0 && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Box sx={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'space-between',
+                pt: 1,
+                borderTop: '1px solid #e2e8f0'
+              }}>
                 <Box sx={{
                   display: 'flex',
                   alignItems: 'center',
@@ -1840,11 +1871,12 @@ function App() {
                       textTransform: 'none',
                       bgcolor: '#ef4444',
                       color: 'white',
-                      px: 2,
-                      py: 1,
+                      px: 3,
+                      py: 1.5,
                       fontSize: 13,
                       fontWeight: 600,
                       boxShadow: '0 2px 8px rgba(239,68,68,0.3)',
+                      minWidth: 'fit-content',
                       '&:hover': { 
                         bgcolor: '#dc2626',
                         boxShadow: '0 4px 12px rgba(239,68,68,0.4)'
@@ -2073,8 +2105,8 @@ function App() {
         <Box sx={{ px: 3, mb: 3, mt: 4 }}>
           <Box sx={{
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
+            flexDirection: 'column',
+            gap: 2,
             bgcolor: 'linear-gradient(135deg, #fef7ed 0%, #fed7aa 100%)',
             borderRadius: 3,
             p: 2.5,
