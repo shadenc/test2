@@ -108,14 +108,6 @@ def export_quarterly_dashboard(quarter_filter):
         # Create DataFrame
         df = pd.DataFrame(dashboard_data)
         
-        # Export to Excel
-        output_dir = project_root / "output" / "excel"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        current_year = datetime.now().year
-        filename = f"dashboard_{quarter_filter}_{current_year}.xlsx"
-        output_path = output_dir / filename
-        
         # Export using ExcelExporter
         try:
             from utils.export_to_excel import ExcelExporter
@@ -126,10 +118,14 @@ def export_quarterly_dashboard(quarter_filter):
                 print(f"✅ Dashboard exported: {result_path}")
                 
                 # Archive to quarterly folder
+                current_year = datetime.now().year
                 archive_dir = project_root / "output" / "archives" / f"{current_year}_{quarter_filter}"
                 archive_dir.mkdir(parents=True, exist_ok=True)
                 
-                archive_path = archive_dir / filename
+                # Use the actual exported filename for archiving
+                result_filename = Path(result_path).name
+                archive_path = archive_dir / result_filename
+                
                 import shutil
                 shutil.copy2(result_path, archive_path)
                 print(f"📁 Archived to: {archive_path}")
@@ -142,7 +138,9 @@ def export_quarterly_dashboard(quarter_filter):
         except Exception as e:
             print(f"❌ Export error: {e}")
             # Fallback: save as CSV
-            csv_path = output_path.with_suffix('.csv')
+            output_dir = project_root / "output" / "excel"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            csv_path = output_dir / f"dashboard_{quarter_filter}_{datetime.now().year}.csv"
             df.to_csv(csv_path, index=False, encoding='utf-8-sig')
             print(f"📊 Saved as CSV: {csv_path}")
             return True
