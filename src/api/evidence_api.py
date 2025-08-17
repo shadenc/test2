@@ -663,65 +663,53 @@ def create_app():
                 elif quarter_filter == "Q4":
                     previous_quarter = "2025Q3"
                 
-                # Get current quarter for header
-                current_quarter = ""
-                if quarter_filter == "Q1":
-                    current_quarter = "2025Q1"
-                elif quarter_filter == "Q2":
-                    current_quarter = "2025Q2"
-                elif quarter_filter == "Q3":
-                    current_quarter = "2025Q3"
-                elif quarter_filter == "Q4":
-                    current_quarter = "2025Q4"
-                
-                # Add evidence mapping information for debugging
-                evidence_note = ""
-                if quarter_filter == "Q1":
-                    evidence_note = "Note: Previous quarter (2024Q4) refers to Annual 2024 statement screenshot"
-                elif quarter_filter == "Q2":
-                    evidence_note = "Note: Previous quarter (2025Q1) refers to Q1 2025 statement screenshot"
-                elif quarter_filter == "Q3":
-                    evidence_note = "Note: Previous quarter (2025Q2) refers to Q2 2025 statement screenshot"
-                elif quarter_filter == "Q4":
-                    evidence_note = "Note: Previous quarter (2025Q3) refers to Q3 2025 statement screenshot"
-                
-                merged_row = {
-                    'رمز الشركة': symbol,
-                    'الشركة': ownership_row.get('company_name', ''),
-                    'ملكية جميع المستثمرين الأجانب': ownership_row.get('foreign_ownership', ''),
-                    'الملكية الحالية': ownership_row.get('max_allowed', ''),
-                    'ملكية المستثمر الاستراتيجي الأجنبي': ownership_row.get('investor_limit', ''),
-                    f'الأرباح المبقاة للربع السابق ({previous_quarter})': quarter_data.get('previous_value', 'لايوجد'),
-                    f'الأرباح المبقاة للربع الحالي ({current_quarter})': quarter_data.get('current_value', 'لايوجد'),
-                    'حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)': quarter_data.get('flow', 'لايوجد'),
-                    'تدفق الأرباح المبقاة للمستثمر الأجنبي': quarter_data.get('reinvested_earnings_flow', 'لايوجد'),
-                    'صافي الربح': net_profit_value,
-                    'صافي الربح للمستثمر الأجنبي': quarter_data.get('net_profit_foreign_investor', 'لايوجد'),
-                    'الأرباح الموزعة للمستثمر الأجنبي': quarter_data.get('distributed_profits_foreign_investor', 'لايوجد'),
-                    'ملاحظة الأدلة': evidence_note  # Add evidence mapping note
-                }
-                merged_data.append(merged_row)
+                            # Get current quarter for header
+            current_quarter = ""
+            if quarter_filter == "Q1":
+                current_quarter = "2025Q1"
+            elif quarter_filter == "Q2":
+                current_quarter = "2025Q2"
+            elif quarter_filter == "Q3":
+                current_quarter = "2025Q3"
+            elif quarter_filter == "Q4":
+                current_quarter = "2025Q4"
+            
+            # Create the merged row with all required data
+            merged_row = {
+                'company_symbol': symbol,
+                'company_name': ownership_row.get('company_name', ''),
+                'ownership_all_foreign': ownership_row.get('ownership_all_foreign', ''),
+                'current_ownership': ownership_row.get('current_ownership', ''),
+                'strategic_foreign_ownership': ownership_row.get('strategic_foreign_ownership', ''),
+                'retained_earnings': quarter_data.get('current_value', 'لا يوجد'),
+                'reinvested_earnings': quarter_data.get('reinvested_earnings_flow', 'لا يوجد'),
+                'previous_quarter': previous_quarter,
+                'current_quarter': current_quarter,
+                'quarter_filter': quarter_filter
+            }
+            
+            merged_data.append(merged_row)
             
             # Convert to DataFrame
-            data = pd.DataFrame(merged_data)
+            df = pd.DataFrame(merged_data)
             
-            # Export dashboard table
-            output_path = exporter.export_dashboard_table(data)
+            # Export to Excel
+            output_path = exporter.export_dashboard_table(df)
             
             if output_path:
-                # Return the file for download
-                return send_file(
-                    output_path,
-                    as_attachment=True,
-                    download_name=f"financial_analysis_{quarter_filter}_2025_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                )
+                return jsonify({
+                    "success": True,
+                    "message": f"Dashboard exported for {quarter_filter}",
+                    "file_path": str(output_path),
+                    "quarter": quarter_filter,
+                    "rows_exported": len(merged_data)
+                })
             else:
-                return jsonify({"error": "Failed to create Excel file"}), 500
+                return jsonify({"error": "Failed to export dashboard"}), 500
                 
         except Exception as e:
-            logger.error(f"Error exporting to Excel: {e}")
-            return jsonify({"error": f"Export failed: {str(e)}"}), 500
+            logger.error(f"Error exporting dashboard: {e}")
+            return jsonify({"error": str(e)}), 500
 
     @app.route('/api/update_ownership', methods=['POST'])
     def update_ownership_data():
@@ -1124,6 +1112,116 @@ def create_app():
             logger.info(f"[Scheduler] Archived results to {archive_dir}")
         except Exception as e:
             logger.error(f"[Scheduler] Error in scheduled refresh: {e}")
+
+    def generate_dashboard_data(quarter_filter: str = None):
+        """
+        Generate dashboard data for a specific quarter.
+        This function is used by the automatic quarterly export system.
+        """
+        try:
+            import pandas as pd
+            import json
+            from pathlib import Path
+            
+            # Default to current quarter if none specified
+            if not quarter_filter:
+                from datetime import datetime
+                month = datetime.now().month
+                if month <= 3:
+                    quarter_filter = "Q1"
+                elif month <= 6:
+                    quarter_filter = "Q2"
+                elif month <= 9:
+                    quarter_filter = "Q3"
+                else:
+                    quarter_filter = "Q4"
+            
+            # Get project root
+            project_root = Path(__file__).parent.parent.parent
+            
+            # Load foreign ownership data
+            ownership_json_path = project_root / "data/ownership/foreign_ownership_data.json"
+            if not ownership_json_path.exists():
+                logger.error("Ownership data file not found")
+                return None
+            
+            with open(ownership_json_path, 'r', encoding='utf-8') as f:
+                ownership_data = json.load(f)
+            
+            # Load retained earnings flow data
+            csv_path = project_root / "data/results/retained_earnings_flow.csv"
+            if not csv_path.exists():
+                logger.error("Retained earnings flow data file not found")
+                return None
+            
+            flow_data = pd.read_csv(csv_path)
+            
+            # Create a map of flow data by symbol and quarter
+            flow_map = {}
+            for _, row in flow_data.iterrows():
+                symbol = str(row.get('company_symbol', '')).strip()
+                quarter = str(row.get('quarter', '')).strip()
+                if symbol and quarter:
+                    if symbol not in flow_map:
+                        flow_map[symbol] = {}
+                    flow_map[symbol][quarter] = {
+                        'previous_value': row.get('previous_value', ''),
+                        'current_value': row.get('current_value', ''),
+                        'flow': row.get('flow', ''),
+                        'reinvested_earnings_flow': row.get('reinvested_earnings_flow', '')
+                    }
+            
+            # Load net profit data
+            net_profit_path = project_root / "data/results/quarterly_net_profit.json"
+            net_profit_data = {}
+            if net_profit_path.exists():
+                with open(net_profit_path, 'r', encoding='utf-8') as f:
+                    net_profit_raw = json.load(f)
+                    for company in net_profit_raw:
+                        symbol = company.get('company_symbol')
+                        if symbol:
+                            net_profit_data[symbol] = company
+            
+            # Merge the data for the selected quarter
+            merged_data = []
+            for ownership_row in ownership_data:
+                symbol = str(ownership_row.get('symbol', '')).strip()
+                flow_info = flow_map.get(symbol, {})
+                net_profit_info = net_profit_data.get(symbol, {})
+                
+                # Only create row for the selected quarter
+                quarter_data = flow_info.get(quarter_filter, {})
+                
+                # Get net profit for this quarter
+                net_profit_value = "لا يوجد"
+                if net_profit_info and 'quarterly_net_profit' in net_profit_info:
+                    quarter_key = f"{quarter_filter} 2025"
+                    if quarter_key in net_profit_info['quarterly_net_profit']:
+                        net_profit_value = net_profit_info['quarterly_net_profit'][quarter_key]
+                
+                # Create the merged row
+                merged_row = {
+                    'رمز الشركة': symbol,
+                    'الشركة': ownership_row.get('company_name', ''),
+                    'ملكية جميع المستثمرين الأجانب': ownership_row.get('foreign_ownership', ''),
+                    'الملكية الحالية': ownership_row.get('max_allowed', ''),
+                    'ملكية المستثمر الاستراتيجي الأجنبي': ownership_row.get('investor_limit', ''),
+                    'الأرباح المبقاة': quarter_data.get('current_value', 'لا يوجد'),
+                    'الأرباح المعاد استثمارها': quarter_data.get('reinvested_earnings_flow', 'لا يوجد'),
+                    'صافي الربح': net_profit_value,
+                    'الربع': quarter_filter
+                }
+                
+                merged_data.append(merged_row)
+            
+            # Convert to DataFrame
+            df = pd.DataFrame(merged_data)
+            logger.info(f"Generated dashboard data for {quarter_filter}: {len(merged_data)} rows")
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error generating dashboard data: {e}")
+            return None
 
     # Start scheduler only once (avoid in child processes)
     if os.environ.get('WERKZEUG_RUN_MAIN', 'true') == 'true':
