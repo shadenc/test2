@@ -652,48 +652,26 @@ def create_app():
                     if quarter_key in net_profit_info['quarterly_net_profit']:
                         net_profit_value = net_profit_info['quarterly_net_profit'][quarter_key]
                 
-                # Get previous quarter for header
-                previous_quarter = ""
-                if quarter_filter == "Q1":
-                    previous_quarter = "2024Q4"  # This refers to Annual 2024 statement
-                elif quarter_filter == "Q2":
-                    previous_quarter = "2025Q1"
-                elif quarter_filter == "Q3":
-                    previous_quarter = "2025Q2"
-                elif quarter_filter == "Q4":
-                    previous_quarter = "2025Q3"
+                # Create the merged row with EXACTLY the same structure as App.js dashboard
+                merged_row = {
+                    'رمز الشركة': symbol,
+                    'الشركة': ownership_row.get('company_name', ''),
+                    'ملكية جميع المستثمرين الأجانب': ownership_row.get('foreign_ownership', ''),
+                    'الملكية الحالية': ownership_row.get('max_allowed', ''),
+                    'ملكية المستثمر الاستراتيجي الأجنبي': ownership_row.get('investor_limit', ''),
+                    'الأرباح المبقاة للربع السابق': quarter_data.get('previous_value', 'لايوجد'),
+                    'الأرباح المبقاة للربع الحالي': quarter_data.get('current_value', 'لايوجد'),
+                    'حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)': quarter_data.get('flow', 'لايوجد'),
+                    'تدفق الأرباح المبقاة للمستثمر الأجنبي': quarter_data.get('reinvested_earnings_flow', 'لايوجد'),
+                    'صافي الربح': net_profit_value,
+                    'صافي الربح للمستثمر الأجنبي': quarter_data.get('net_profit_foreign_investor', 'لايوجد'),
+                    'الأرباح الموزعة للمستثمر الأجنبي': quarter_data.get('distributed_profits_foreign_investor', 'لايوجد'),
+                    'الربع': quarter_filter,
+                    'السنة': quarter_data.get('year', ''),
+                    'صيغة التدفق': quarter_data.get('flow_formula', '')
+                }
                 
-                            # Get current quarter for header
-            current_quarter = ""
-            if quarter_filter == "Q1":
-                current_quarter = "2025Q1"
-            elif quarter_filter == "Q2":
-                current_quarter = "2025Q2"
-            elif quarter_filter == "Q3":
-                current_quarter = "2025Q3"
-            elif quarter_filter == "Q4":
-                current_quarter = "2025Q4"
-            
-            # Create the merged row with EXACTLY the same structure as App.js dashboard
-            merged_row = {
-                'رمز الشركة': symbol,
-                'الشركة': ownership_row.get('company_name', ''),
-                'ملكية جميع المستثمرين الأجانب': ownership_row.get('foreign_ownership', ''),
-                'الملكية الحالية': ownership_row.get('max_allowed', ''),
-                'ملكية المستثمر الاستراتيجي الأجنبي': ownership_row.get('investor_limit', ''),
-                'الأرباح المبقاة للربع السابق': quarter_data.get('previous_value', 'لايوجد'),
-                'الأرباح المبقاة للربع الحالي': quarter_data.get('current_value', 'لايوجد'),
-                'حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)': quarter_data.get('flow', 'لايوجد'),
-                'تدفق الأرباح المبقاة للمستثمر الأجنبي': quarter_data.get('reinvested_earnings_flow', 'لايوجد'),
-                'صافي الربح': net_profit_value,
-                'صافي الربح للمستثمر الأجنبي': quarter_data.get('net_profit_foreign_investor', 'لايوجد'),
-                'الأرباح الموزعة للمستثمر الأجنبي': quarter_data.get('distributed_profits_foreign_investor', 'لايوجد'),
-                'الربع': quarter_filter,
-                'السنة': quarter_data.get('year', ''),
-                'صيغة التدفق': quarter_data.get('flow_formula', '')
-            }
-            
-            merged_data.append(merged_row)
+                merged_data.append(merged_row)
             
             # Convert to DataFrame
             df = pd.DataFrame(merged_data)
