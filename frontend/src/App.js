@@ -703,12 +703,12 @@ function App() {
   };
 
   // Function to handle export selection
-  const handleExportSelection = (fileId, checked) => {
+  const handleExportSelection = (filename, checked) => {
     const newSelected = new Set(selectedExports);
     if (checked) {
-      newSelected.add(fileId);
+      newSelected.add(filename);
     } else {
-      newSelected.delete(fileId);
+      newSelected.delete(filename);
     }
     setSelectedExports(newSelected);
   };
@@ -716,7 +716,7 @@ function App() {
   // Function to handle select all exports
   const handleSelectAllExports = (checked) => {
     if (checked) {
-      setSelectedExports(new Set(userExports.map(file => file.id)));
+      setSelectedExports(new Set(userExports.map(file => file.filename)));
     } else {
       setSelectedExports(new Set());
     }
@@ -748,7 +748,9 @@ function App() {
     try {
       const deletePromises = Array.from(selectedExports).map(fileId => {
         const file = userExports.find(f => f.id === fileId);
-        return fetch(`http://localhost:5002${file.download_url}`, { method: 'DELETE' });
+        // Extract filename from download_url (e.g., /user_exports/filename.xlsx -> filename.xlsx)
+        const filename = file.download_url.split('/').pop();
+        return fetch(`http://localhost:5002/api/user_exports/${filename}`, { method: 'DELETE' });
       });
       
       await Promise.all(deletePromises);
@@ -1739,80 +1741,124 @@ function App() {
         {/* Soft divider and extra space below header */}
         <Box sx={{ height: 24 }} />
         <Box sx={{ width: '100%', height: 2, bgcolor: '#f4f6fa', mb: 3, borderRadius: 2 }} />
-        {/* User-Saved Exports Section */}
-        <Box sx={{ mt: 3, pb: 0, px: 0 }}>
+        {/* Modern File Management Header */}
+        <Box sx={{ px: 3, mb: 3 }}>
           <Box sx={{
             display: 'flex',
             alignItems: 'center',
-            bgcolor: '#e9f5ee',
-            borderRadius: 4,
-            px: 2.5,
-            py: 1.5,
-            width: '100%',
-            boxSizing: 'border-box',
-            mb: 2,
-            gap: 1.5,
+            justifyContent: 'space-between',
+            bgcolor: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)',
+            borderRadius: 3,
+            p: 2.5,
+            border: '1px solid #e2e8f0',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            position: 'relative',
+            overflow: 'hidden',
+            '&::before': {
+              content: '""',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: '3px',
+              background: 'linear-gradient(90deg, #1e6641 0%, #10b981 100%)',
+            }
           }}>
-            <Box sx={{ width: 3, height: 24, bgcolor: '#1e6641', borderRadius: 6, mr: 0 }} />
-            <Typography
-              variant="subtitle1"
-              sx={{
-                fontWeight: 700,
-                color: '#1e6641',
-                fontSize: 18,
-                letterSpacing: 0.1,
-                minWidth: 0,
-                pr: 1,
-              }}
-            >
-              ملفاتك المصدّرة
-            </Typography>
-          </Box>
-        </Box>
-        
-        {/* Selection controls */}
-        {userExports.length > 0 && (
-          <Box sx={{ px: 2.5, mb: 2.5 }}>
-            <Box sx={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'space-between',
-              bgcolor: '#f8f9fa',
-              borderRadius: 2,
-              p: 2,
-              border: '1px solid #e0e0e0'
-            }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <input
-                  type="checkbox"
-                  checked={selectedExports.size === userExports.length}
-                  onChange={(e) => handleSelectAllExports(e.target.checked)}
-                  style={{ width: 18, height: 18, accentColor: '#1e6641' }}
-                />
-                <Typography sx={{ fontSize: 14, color: '#666', fontWeight: 500 }}>
-                  تحديد الكل
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Box sx={{
+                width: 40,
+                height: 40,
+                bgcolor: '#1e6641',
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 12px rgba(30,102,65,0.3)'
+              }}>
+                <FolderOpenIcon sx={{ color: 'white', fontSize: 20 }} />
+              </Box>
+              <Box>
+                <Typography sx={{
+                  fontWeight: 800,
+                  color: '#1e293b',
+                  fontSize: 18,
+                  mb: 0.5
+                }}>
+                  ملفاتك المصدّرة
+                </Typography>
+                <Typography sx={{
+                  color: '#64748b',
+                  fontSize: 13,
+                  fontWeight: 500
+                }}>
+                  {userExports.length} ملف محفوظ
                 </Typography>
               </Box>
-              {selectedExports.size > 0 && (
-                <Button
-                  variant="outlined"
-                  color="error"
-                  size="small"
-                  onClick={() => setBulkDeleteDialogOpen(true)}
-                  sx={{ 
-                    borderRadius: 2, 
-                    textTransform: 'none',
-                    borderColor: '#d32f2f',
-                    color: '#d32f2f',
-                    '&:hover': { borderColor: '#b71c1c', bgcolor: '#ffebee' }
-                  }}
-                >
-                  حذف {selectedExports.size} ملفات محددة
-                </Button>
-              )}
             </Box>
+            
+            {/* Modern Selection Controls */}
+            {userExports.length > 0 && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Box sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1.5,
+                  bgcolor: 'white',
+                  px: 2,
+                  py: 1,
+                  borderRadius: 2,
+                  border: '1px solid #e2e8f0'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedExports.size === userExports.length}
+                    onChange={(e) => handleSelectAllExports(e.target.checked)}
+                    style={{ 
+                      width: 16, 
+                      height: 16, 
+                      accentColor: '#1e6641',
+                      cursor: 'pointer'
+                    }}
+                  />
+                  <Typography sx={{ 
+                    fontSize: 13, 
+                    color: '#475569', 
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}>
+                    تحديد الكل
+                  </Typography>
+                </Box>
+                
+                {selectedExports.size > 0 && (
+                  <Button
+                    variant="contained"
+                    size="small"
+                    onClick={() => setBulkDeleteDialogOpen(true)}
+                    sx={{ 
+                      borderRadius: 2,
+                      textTransform: 'none',
+                      bgcolor: '#ef4444',
+                      color: 'white',
+                      px: 2,
+                      py: 1,
+                      fontSize: 13,
+                      fontWeight: 600,
+                      boxShadow: '0 2px 8px rgba(239,68,68,0.3)',
+                      '&:hover': { 
+                        bgcolor: '#dc2626',
+                        boxShadow: '0 4px 12px rgba(239,68,68,0.4)'
+                      }
+                    }}
+                    startIcon={<DeleteOutlineIcon sx={{ fontSize: 16 }} />}
+                  >
+                    حذف {selectedExports.size} ملف
+                  </Button>
+                )}
+              </Box>
+            )}
           </Box>
-        )}
+        </Box>
         
         <List>
           {userExportsLoading ? (
@@ -1820,145 +1866,275 @@ function App() {
           ) : userExportsError ? (
             <ListItem><Alert severity="error">{userExportsError}</Alert></ListItem>
           ) : userExports.length === 0 ? (
-            <ListItem sx={{ justifyContent: 'center', alignItems: 'center', minHeight: 80, width: '100%' }}>
-              <Typography sx={{ color: '#b0b7be', fontSize: 17, textAlign: 'center', width: '100%' }}>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              py: 6,
+              px: 3
+            }}>
+              <Box sx={{
+                width: 64,
+                height: 64,
+                bgcolor: '#f1f5f9',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                mb: 2
+              }}>
+                <FolderOpenIcon sx={{ color: '#94a3b8', fontSize: 28 }} />
+              </Box>
+              <Typography sx={{ 
+                color: '#64748b', 
+                fontSize: 16, 
+                fontWeight: 600,
+                textAlign: 'center',
+                mb: 1
+              }}>
                 لا توجد ملفات محفوظة بعد
               </Typography>
-            </ListItem>
+              <Typography sx={{ 
+                color: '#94a3b8', 
+                fontSize: 14, 
+                textAlign: 'center',
+                maxWidth: 200
+              }}>
+                قم بتصدير البيانات من الجدول الرئيسي لحفظها هنا
+              </Typography>
+            </Box>
           ) : (
             userExports.map((file, idx) => (
               <ListItem
                 key={idx}
                 tabIndex={0}
                 sx={{
-                  pl: 3, pr: 3, py: 2.2,
-                  mb: 1.5,
-                  bgcolor: '#fff',
-                  borderRadius: 2.5,
-                  boxShadow: '0 1px 6px 0 rgba(30,102,65,0.06)',
+                  mx: 2,
+                  mb: 2,
+                  bgcolor: 'white',
+                  borderRadius: 3,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
                   display: 'flex',
                   alignItems: 'center',
-                  '&:hover .export-delete-btn': { opacity: 1 },
-                  minHeight: 56,
-                  border: 'none',
-                  transition: 'box-shadow 0.2s, transform 0.2s',
+                  minHeight: 72,
+                  border: '1px solid #f1f5f9',
+                  transition: 'all 0.2s ease',
+                  cursor: 'pointer',
                   '&:hover': {
-                    boxShadow: '0 4px 16px 0 rgba(30,102,65,0.10)',
-                    transform: 'translateY(-2px) scale(1.01)',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+                    transform: 'translateY(-1px)',
+                    borderColor: '#1e6641',
                   },
-                  outline: 'none',
                   '&:focus': {
-                    boxShadow: '0 0 0 2px #1e664144',
+                    boxShadow: '0 0 0 3px rgba(30,102,65,0.1)',
                   },
                 }}
               >
-                {/* Selection checkbox */}
-                <input
-                  type="checkbox"
-                  checked={selectedExports.has(file.id || idx)}
-                  onChange={(e) => handleExportSelection(file.id || idx, e.target.checked)}
-                  style={{ 
-                    width: 18, 
-                    height: 18, 
-                    accentColor: '#1e6641',
-                    marginRight: 12
-                  }}
-                />
-                <Box sx={{ flexGrow: 1 }}>
-                  <Typography sx={{ fontWeight: 500, color: '#1e6641', fontSize: 15 }}>
-                    {(() => {
-                      // file.export_date is 'YYYY-MM-DD HH:mm:ss'
-                      const datePart = file.export_date.split(' ')[0];
-                      const [year, month, day] = datePart.split('-');
-                      return `dashboard-${day}-${month}-${year}`;
-                    })()}
-                  </Typography>
+                {/* Modern Selection Checkbox */}
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  width: 48,
+                  height: 48,
+                  mr: 2
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedExports.has(file.filename)}
+                    onChange={(e) => handleExportSelection(file.filename, e.target.checked)}
+                    style={{ 
+                      width: 20, 
+                      height: 20, 
+                      accentColor: '#1e6641',
+                      cursor: 'pointer'
+                    }}
+                  />
                 </Box>
-                <Tooltip title="تحميل" arrow>
-                  <IconButton
-                    aria-label="تحميل"
-                    href={`http://localhost:5002${file.download_url}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{
-                      color: '#1e6641',
-                      bgcolor: 'transparent',
-                      borderRadius: '50%',
-                      p: 0.7,
-                      mx: 0.5,
-                      transition: 'color 0.2s, background 0.2s',
+                
+                {/* File Icon and Info */}
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: 2,
+                  flexGrow: 1 
+                }}>
+                  <Box sx={{
+                    width: 44,
+                    height: 44,
+                    bgcolor: '#f8fafc',
+                    borderRadius: 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: '1px solid #e2e8f0'
+                  }}>
+                    <Box sx={{ 
+                      width: 24, 
+                      height: 24, 
+                      bgcolor: '#1e6641', 
+                      borderRadius: 1,
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 22,
-                      height: 36,
-                      width: 36,
-                      minWidth: 36,
-                    }}
-                  >
-                    <DownloadIcon sx={{ fontSize: 22 }} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="حذف" arrow>
-                  <IconButton
-                    aria-label="حذف"
-                    className="export-delete-btn"
-                    onClick={() => handleDeleteExport(file)}
-                    sx={{
-                      ml: 0.5,
-                      opacity: 0,
-                      color: '#7b7b7b',
-                      bgcolor: 'transparent',
-                      borderRadius: '50%',
-                      p: 0.7,
-                      transition: 'opacity 0.2s, color 0.2s, background 0.2s',
-                      boxShadow: 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 22,
-                      height: 36,
-                      width: 36,
-                      minWidth: 36,
-                      '&:hover': { color: '#444', bgcolor: 'rgba(120,120,120,0.07)' },
-                    }}
-                    size="small"
-                  >
-                    <DeleteOutlineIcon sx={{ fontSize: 22 }} />
-                  </IconButton>
-                </Tooltip>
+                      justifyContent: 'center'
+                    }}>
+                      <Typography sx={{ color: 'white', fontSize: 12, fontWeight: 700 }}>
+                        XLS
+                      </Typography>
+                    </Box>
+                  </Box>
+                  
+                  <Box sx={{ flexGrow: 1 }}>
+                    <Typography sx={{ 
+                      fontWeight: 600, 
+                      color: '#1e293b', 
+                      fontSize: 15,
+                      mb: 0.5
+                    }}>
+                      {(() => {
+                        // file.export_date is 'YYYY-MM-DD HH:mm:ss'
+                        const datePart = file.export_date.split(' ')[0];
+                        const [year, month, day] = datePart.split('-');
+                        return `Dashboard ${day}/${month}/${year}`;
+                      })()}
+                    </Typography>
+                    <Typography sx={{ 
+                      color: '#64748b', 
+                      fontSize: 12,
+                      fontWeight: 500
+                    }}>
+                      تم التصدير في {file.export_date}
+                    </Typography>
+                  </Box>
+                </Box>
+                {/* Modern Action Buttons */}
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: 1,
+                  opacity: 0,
+                  transition: 'opacity 0.2s ease',
+                  '.MuiListItem-root:hover &': { opacity: 1 }
+                }}>
+                  <Tooltip title="تحميل الملف" arrow placement="top">
+                    <IconButton
+                      aria-label="تحميل"
+                      href={`http://localhost:5002${file.download_url}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{
+                        color: '#1e6641',
+                        bgcolor: '#f0fdf4',
+                        borderRadius: 2,
+                        p: 1,
+                        transition: 'all 0.2s ease',
+                        border: '1px solid #dcfce7',
+                        '&:hover': {
+                          bgcolor: '#1e6641',
+                          color: 'white',
+                          transform: 'scale(1.05)',
+                          boxShadow: '0 4px 12px rgba(30,102,65,0.3)'
+                        }
+                      }}
+                    >
+                      <DownloadIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  </Tooltip>
+                  
+                  <Tooltip title="حذف الملف" arrow placement="top">
+                    <IconButton
+                      aria-label="حذف"
+                      onClick={() => handleDeleteExport(file)}
+                      sx={{
+                        color: '#ef4444',
+                        bgcolor: '#fef2f2',
+                        borderRadius: 2,
+                        p: 1,
+                        transition: 'all 0.2s ease',
+                        border: '1px solid #fecaca',
+                        '&:hover': {
+                          bgcolor: '#ef4444',
+                          color: 'white',
+                          transform: 'scale(1.05)',
+                          boxShadow: '0 4px 12px rgba(239,68,68,0.3)'
+                        }
+                      }}
+                    >
+                      <DeleteOutlineIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
               </ListItem>
             ))
           )}
         </List>
-        {/* Divider between sections */}
-        <Box sx={{ mt: 4, pb: 0, px: 0 }}>
+        {/* Modern Quarterly Archive Header */}
+        <Box sx={{ px: 3, mb: 3, mt: 4 }}>
           <Box sx={{
             display: 'flex',
             alignItems: 'center',
-            bgcolor: '#e9f5ee',
-            borderRadius: 4,
-            px: 2.5,
-            py: 1.5,
-            width: '100%',
-            boxSizing: 'border-box',
-            mb: 2,
-            gap: 1.5,
+            justifyContent: 'space-between',
+            bgcolor: 'linear-gradient(135deg, #fef7ed 0%, #fed7aa 100%)',
+            borderRadius: 3,
+            p: 2.5,
+            border: '1px solid #fed7aa',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            position: 'relative',
+            overflow: 'hidden',
+            '&::before': {
+              content: '""',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: '3px',
+              background: 'linear-gradient(90deg, #f59e0b 0%, #d97706 100%)',
+            }
           }}>
-            <Box sx={{ width: 3, height: 24, bgcolor: '#1e6641', borderRadius: 6, mr: 0 }} />
-            <Typography
-              variant="subtitle1"
-              sx={{
-                fontWeight: 700,
-                color: '#1e6641',
-                fontSize: 18,
-                letterSpacing: 0.1,
-                minWidth: 0,
-                pr: 1,
-              }}
-            >
-              أرشيف الفترات الربعية
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Box sx={{
+                width: 40,
+                height: 40,
+                bgcolor: '#f59e0b',
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 12px rgba(245,158,11,0.3)'
+              }}>
+                <Box sx={{ 
+                  width: 20, 
+                  height: 20, 
+                  bgcolor: 'white', 
+                  borderRadius: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <Typography sx={{ color: '#f59e0b', fontSize: 12, fontWeight: 700 }}>
+                    Q
+                  </Typography>
+                </Box>
+              </Box>
+              <Box>
+                <Typography sx={{
+                  fontWeight: 800,
+                  color: '#92400e',
+                  fontSize: 18,
+                  mb: 0.5
+                }}>
+                  أرشيف الفترات الربعية
+                </Typography>
+                <Typography sx={{
+                  color: '#a16207',
+                  fontSize: 13,
+                  fontWeight: 500
+                }}>
+                  {snapshots.length} فترة محفوظة
+                </Typography>
+              </Box>
+            </Box>
           </Box>
         </Box>
         <List>
@@ -1967,54 +2143,179 @@ function App() {
           ) : snapshotsError ? (
             <ListItem><Alert severity="error">{snapshotsError}</Alert></ListItem>
           ) : snapshots.length === 0 ? (
-            <ListItem sx={{ justifyContent: 'center', color: '#888' }}>لا توجد ملفات محفوظة بعد</ListItem>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              py: 6,
+              px: 3
+            }}>
+              <Box sx={{
+                width: 64,
+                height: 64,
+                bgcolor: '#fef7ed',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                mb: 2
+              }}>
+                <Box sx={{ 
+                  width: 32, 
+                  height: 32, 
+                  bgcolor: '#f59e0b', 
+                  borderRadius: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <Typography sx={{ color: 'white', fontSize: 14, fontWeight: 700 }}>
+                    Q
+                  </Typography>
+                </Box>
+              </Box>
+              <Typography sx={{ 
+                color: '#92400e', 
+                fontSize: 16, 
+                fontWeight: 600,
+                textAlign: 'center',
+                mb: 1
+              }}>
+                لا توجد أرشيفات ربعية بعد
+              </Typography>
+              <Typography sx={{ 
+                color: '#a16207', 
+                fontSize: 14, 
+                textAlign: 'center',
+                maxWidth: 200
+              }}>
+                سيتم إنشاء أرشيفات تلقائياً في نهاية كل ربع
+              </Typography>
+            </Box>
           ) : (
             snapshots.map((snap, idx) => (
               <ListItem key={idx} sx={{ 
-                pl: 3, 
-                pr: 3, 
-                py: 2.2,
-                mb: 1.5,
-                bgcolor: '#fff',
-                borderRadius: 2.5,
-                boxShadow: '0 1px 6px 0 rgba(30,102,65,0.06)',
+                mx: 2,
+                mb: 2,
+                bgcolor: 'white',
+                borderRadius: 3,
+                boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
                 display: 'flex',
                 alignItems: 'center',
-                minHeight: 56,
-                border: 'none',
-                transition: 'box-shadow 0.2s, transform 0.2s',
+                minHeight: 72,
+                border: '1px solid #fef3c7',
+                transition: 'all 0.2s ease',
+                cursor: 'pointer',
                 '&:hover': {
-                  boxShadow: '0 4px 16px 0 rgba(30,102,65,0.10)',
-                  transform: 'translateY(-2px) scale(1.01)',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+                  transform: 'translateY(-1px)',
+                  borderColor: '#f59e0b',
                 },
               }}>
-                <span style={{ fontSize: 22, marginRight: 12 }}>📄</span>
-                <Typography sx={{ fontWeight: 500, color: '#1e6641', flexGrow: 1, fontSize: 15 }}>
-                  {`${snap.year} ${snap.quarter.replace('Q', 'Q')} — ${snap.snapshot_date}`}
-                </Typography>
-                <Tooltip title={`تاريخ الاستخراج: ${snap.snapshot_date}`} arrow>
+                {/* Quarter Icon */}
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  width: 48,
+                  height: 48,
+                  mr: 2
+                }}>
+                  <Box sx={{
+                    width: 36,
+                    height: 36,
+                    bgcolor: '#fef3c7',
+                    borderRadius: 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: '1px solid #fde68a'
+                  }}>
+                    <Typography sx={{ 
+                      color: '#d97706', 
+                      fontSize: 14, 
+                      fontWeight: 700 
+                    }}>
+                      {snap.quarter.replace('Q', 'Q')}
+                    </Typography>
+                  </Box>
+                </Box>
+                
+                {/* Quarter Info */}
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: 2,
+                  flexGrow: 1 
+                }}>
+                  <Box sx={{
+                    width: 44,
+                    height: 44,
+                    bgcolor: '#fef7ed',
+                    borderRadius: 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: '1px solid #fed7aa'
+                  }}>
+                    <Box sx={{ 
+                      width: 24, 
+                      height: 24, 
+                      bgcolor: '#f59e0b', 
+                      borderRadius: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <Typography sx={{ color: 'white', fontSize: 10, fontWeight: 700 }}>
+                        {snap.year}
+                      </Typography>
+                    </Box>
+                  </Box>
+                  
+                  <Box sx={{ flexGrow: 1 }}>
+                    <Typography sx={{ 
+                      fontWeight: 600, 
+                      color: '#92400e', 
+                      fontSize: 15,
+                      mb: 0.5
+                    }}>
+                      {`الربع ${snap.quarter.replace('Q', '')} - ${snap.year}`}
+                    </Typography>
+                    <Typography sx={{ 
+                      color: '#a16207', 
+                      fontSize: 12,
+                      fontWeight: 500
+                    }}>
+                      تم الحفظ في {snap.snapshot_date}
+                    </Typography>
+                  </Box>
+                </Box>
+                
+                {/* Download Button */}
+                <Tooltip title="تحميل الأرشيف" arrow placement="top">
                   <IconButton
                     aria-label="تحميل"
                     href={`http://localhost:5002${snap.download_url}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     sx={{
-                      color: '#1e6641',
-                      bgcolor: 'transparent',
-                      borderRadius: '50%',
-                      p: 0.7,
-                      mx: 0.5,
-                      transition: 'color 0.2s, background 0.2s',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 22,
-                      height: 36,
-                      width: 36,
-                      minWidth: 36,
+                      color: '#f59e0b',
+                      bgcolor: '#fef3c7',
+                      borderRadius: 2,
+                      p: 1,
+                      transition: 'all 0.2s ease',
+                      border: '1px solid #fde68a',
+                      '&:hover': {
+                        bgcolor: '#f59e0b',
+                        color: 'white',
+                        transform: 'scale(1.05)',
+                        boxShadow: '0 4px 12px rgba(245,158,11,0.3)'
+                      }
                     }}
                   >
-                    <DownloadIcon sx={{ fontSize: 22 }} />
+                    <DownloadIcon sx={{ fontSize: 18 }} />
                   </IconButton>
                 </Tooltip>
               </ListItem>
