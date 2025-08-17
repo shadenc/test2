@@ -35,13 +35,15 @@ import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import MenuItem from '@mui/material/MenuItem';
+import EditIcon from '@mui/icons-material/Edit';
 
 // Evidence Modal Component
-const EvidenceModal = ({ open, onClose, evidenceData, loading, error }) => {
+const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpdate }) => {
   const [verifyMode, setVerifyMode] = useState(null); // null | 'confirm' | 'incorrect'
   const [correctionValue, setCorrectionValue] = useState("");
   const [correctionFeedback, setCorrectionFeedback] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [updateSuccess, setUpdateSuccess] = useState(false);
 
   return (
     <Modal
@@ -55,9 +57,9 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error }) => {
         top: '50%',
         left: '50%',
         transform: 'translate(-50%, -50%)',
-        width: { xs: '95%', md: '80%' },
-        maxWidth: 800,
-        maxHeight: '90vh',
+        width: { xs: '95%', md: '70%' },
+        maxWidth: 600,
+        maxHeight: '80vh',
         bgcolor: 'background.paper',
         borderRadius: 3,
         boxShadow: 24,
@@ -91,37 +93,29 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error }) => {
 
         {evidenceData && !loading && (
           <Box>
-            {/* Company Info */}
-            <Box sx={{ mb: 3, p: 2, bgcolor: '#f8f9fa', borderRadius: 2 }}>
-              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 1, color: '#1e6641' }}>
-                معلومات الشركة
-              </Typography>
-              <Typography><strong>الرمز:</strong> {evidenceData.company_symbol}</Typography>
-              <Typography><strong>اسم الشركة:</strong> {evidenceData.company_name}</Typography>
-              {evidenceData.year && <Typography><strong>السنة:</strong> {evidenceData.year}</Typography>}
-            </Box>
-
             {/* Screenshot */}
             {evidenceData.evidence && evidenceData.evidence.has_evidence && (
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: '#1e6641' }}>
-                  لقطة شاشة من المستند
-                </Typography>
+              <Box sx={{ mb: 4 }}>
                 <Box sx={{ 
                   display: 'flex', 
                   justifyContent: 'center',
                   border: '2px solid #e0e0e0',
                   borderRadius: 2,
-                  overflow: 'hidden',
-                  bgcolor: '#fafafa'
+                  overflow: 'auto',
+                  bgcolor: '#fafafa',
+                  maxHeight: '50vh'
                 }}>
                   <img 
-                    src={`http://localhost:5002/api/evidence/${evidenceData.company_symbol}.png`} 
+                    src={`http://localhost:5002/api/evidence/${evidenceData.company_symbol}.png?quarter=${evidenceData.evidence?.requested_quarter || 'Q1_2025'}&t=${Date.now()}`}
                     alt="Evidence Screenshot"
                     style={{ 
                       maxWidth: '100%', 
-                      maxHeight: '600px',
+                      maxHeight: 'none',
                       objectFit: 'contain'
+                    }}
+                    onLoad={() => {
+                      console.log('Evidence image loaded with quarter:', evidenceData.evidence?.requested_quarter);
+                      console.log('Full image URL:', `http://localhost:5002/api/evidence/${evidenceData.company_symbol}.png?quarter=${evidenceData.evidence?.requested_quarter || 'Q1_2025'}&t=${Date.now()}`);
                     }}
                   />
                 </Box>
@@ -130,20 +124,114 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error }) => {
 
             {/* Extraction Details */}
             {evidenceData.numeric_value && (
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: '#1e6641' }}>
+              <Box sx={{ mb: 4 }}>
+                <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 3, color: '#1e6641' }}>
                   تفاصيل الاستخراج
                 </Typography>
                 <Box sx={{ 
-                  p: 2, 
-                  bgcolor: '#f8f9fa', 
-                  borderRadius: 2,
-                  border: '1px solid #e0e0e0'
+                  p: 4, 
+                  bgcolor: '#ffffff', 
+                  borderRadius: 3,
+                  border: '2px solid #e8f5ee',
+                  boxShadow: '0 4px 20px rgba(30, 102, 65, 0.1)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 3
                 }}>
-                  <Typography><strong>القيمة المستخرجة:</strong> {evidenceData.numeric_value?.toLocaleString('en-US')} SAR</Typography>
-                  {evidenceData.pdf_filename && <Typography><strong>اسم الملف:</strong> {evidenceData.pdf_filename}</Typography>}
-                  {evidenceData.extraction_method && <Typography><strong>طريقة الاستخراج:</strong> {evidenceData.extraction_method}</Typography>}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <Typography sx={{ fontWeight: 'bold', fontSize: '1.2rem', color: '#333' }}>
+                      القيمة المستخرجة:
+                    </Typography>
+                    <Tooltip title="هل تحتاج لتغيير هذه القيمة؟ انقر هنا للتعديل" arrow placement="top">
+                      <InlineEditableCell
+                        value={evidenceData.numeric_value}
+                        onSave={async (newValue) => {
+                          try {
+                            // Determine the field type based on the evidence data
+                            let fieldType = 'current_quarter'; // default to current_quarter
+                            if (evidenceData.evidence?.requested_quarter) {
+                              const quarter = evidenceData.evidence.requested_quarter;
+                              if (quarter.includes('Annual_2024') || quarter.includes('Q4_2024')) {
+                                fieldType = 'previous_quarter';
+                              } else if (quarter.includes('Q1_2025') || quarter.includes('Q2_2025') || quarter.includes('Q3_2025') || quarter.includes('Q4_2025')) {
+                                fieldType = 'current_quarter';
+                              }
+                            }
+                            
+                            console.log('Determined field type:', fieldType, 'for quarter:', evidenceData.evidence?.requested_quarter);
+                            
+                            const requestBody = {
+                              company_symbol: parseInt(evidenceData.company_symbol || evidenceData.symbol),
+                              field_type: fieldType,
+                              new_value: parseFloat(newValue),
+                              quarter: evidenceData.evidence?.requested_quarter?.replace('Annual_2024', 'Q4').replace('Q1_2025', 'Q1').replace('Q2_2025', 'Q2').replace('Q3_2025', 'Q3').replace('Q4_2025', 'Q4') || 'Q1',
+                              feedback: 'Corrected via evidence modal'
+                            };
+                            
+                            console.log('Sending correction request:', requestBody);
+                            
+                            const response = await fetch('http://localhost:5002/api/correct_field_value', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify(requestBody),
+                            });
+                            
+                            const data = await response.json();
+                            console.log('Correction response:', data);
+                            
+                            if (data.status === 'success') {
+                              // Update the evidence data to show the new value
+                              evidenceData.numeric_value = newValue;
+                              // Show success message
+                              setUpdateSuccess(true);
+                              // Call the callback to refresh the main data
+                              if (onDataUpdate) {
+                                onDataUpdate();
+                              }
+                              // Hide success message after 3 seconds
+                              setTimeout(() => setUpdateSuccess(false), 3000);
+                            } else {
+                              const errorMessage = data.message || data.error || 'Unknown error occurred';
+                              console.error('Correction failed:', errorMessage);
+                              alert('فشل في حفظ التصحيح: ' + errorMessage);
+                            }
+                          } catch (error) {
+                            alert('حدث خطأ أثناء حفظ التصحيح: ' + error.message);
+                          }
+                        }}
+                        fieldType="retained_earnings"
+                        companySymbol={evidenceData.company_symbol || evidenceData.symbol}
+                        companyName={evidenceData.company_name}
+                        initialValue={evidenceData.numeric_value}
+                      />
+                    </Tooltip>
+                  </Box>
+                  {evidenceData.extraction_method && (
+                    <Box sx={{ 
+                      p: 3,
+                      bgcolor: '#f8f9fa',
+                      borderRadius: 2,
+                      border: '1px solid #e0e0e0'
+                    }}>
+                      <Typography sx={{ 
+                        fontSize: '1rem',
+                        color: '#666',
+                        fontWeight: '500'
+                      }}>
+                        <strong>طريقة الاستخراج:</strong> {evidenceData.extraction_method}
+                      </Typography>
+                    </Box>
+                  )}
                 </Box>
+              </Box>
+            )}
+
+            {/* Success Message */}
+            {updateSuccess && (
+              <Box sx={{ mb: 3 }}>
+                <Alert severity="success" sx={{ borderRadius: 2 }}>
+                  تم تحديث القيمة بنجاح! سيتم تحديث البيانات في الجدول الرئيسي.
+                </Alert>
               </Box>
             )}
 
@@ -242,126 +330,273 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error }) => {
   );
 };
 
-const getColumns = (quarterFilter) => [
-  { field: "symbol", headerName: "رمز الشركة", width: 150, align: "right", headerAlign: "right" },
-  { field: "company_name", headerName: "الشركة", width: 250, align: "right", headerAlign: "right" },
-  { field: "foreign_ownership", headerName: "ملكية جميع المستثمرين الأجانب", width: 280, align: "right", headerAlign: "right" },
-  { field: "max_allowed", headerName: "الملكية الحالية", width: 200, align: "right", headerAlign: "right" },
-  { field: "investor_limit", headerName: "ملكية المستثمر الاستراتيجي الأجنبي", width: 280, align: "right", headerAlign: "right" },
-  { 
-    field: "previous_quarter_value", 
-    headerName: `الأرباح المبقاة للربع السابق (${quarterFilter === "Q1" ? "2024Q4" : quarterFilter === "Q2" ? "2025Q1" : quarterFilter === "Q3" ? "2025Q2" : quarterFilter === "Q4" ? "2025Q3" : "2024Q4"})`, 
-    width: 300, 
-    align: "right", 
-    headerAlign: "right",
-    renderCell: (params) => {
-      const value = params.value;
-      if (!value || value === "" || value === "null" || value === "undefined") {
-        return "لايوجد";
-      }
-      const numValue = parseFloat(value);
-      if (!isNaN(numValue)) {
-        return (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography>{numValue.toLocaleString('en-US')}</Typography>
-            <IconButton 
-              size="small" 
-              onClick={(e) => {
-                e.stopPropagation();
-                params.row.onEvidenceClick && params.row.onEvidenceClick(params.row);
-              }}
-              sx={{ 
-                color: '#1e6641',
-                '&:hover': { bgcolor: '#e8f5ee' }
-              }}
-            >
-              <VisibilityIcon fontSize="small" />
-            </IconButton>
-          </Box>
-        );
-      }
-      return value;
+// Edit Value Modal Component
+const EditValueModal = ({ open, onClose, editData, onSave, loading }) => {
+  const [newValue, setNewValue] = useState("");
+  const [feedback, setFeedback] = useState("");
+
+  // Update local state when editData changes
+  useEffect(() => {
+    if (editData) {
+      setNewValue(editData.currentValue.toString());
+      setFeedback("");
     }
-  },
-  { 
-    field: "current_quarter_value", 
-    headerName: `الأرباح المبقاة للربع الحالي (${quarterFilter === "Q1" ? "2025Q1" : quarterFilter === "Q2" ? "2025Q2" : quarterFilter === "Q3" ? "2025Q3" : quarterFilter === "Q4" ? "2025Q4" : "2025Q1"})`, 
-    width: 300, 
-    align: "right", 
-    headerAlign: "right",
-    renderCell: (params) => {
-      const value = params.value;
-      if (!value || value === "" || value === "null" || value === "undefined") {
-        return "لايوجد";
-      }
-      const numValue = parseFloat(value);
-      if (!isNaN(numValue)) {
-        return (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography>{numValue.toLocaleString('en-US')}</Typography>
-            <IconButton 
-              size="small" 
-              onClick={(e) => {
-                e.stopPropagation();
-                params.row.onEvidenceClick && params.row.onEvidenceClick(params.row);
-              }}
-              sx={{ 
-                color: '#1e6641',
-                '&:hover': { bgcolor: '#e8f5ee' }
-              }}
-            >
-              <VisibilityIcon fontSize="small" />
-            </IconButton>
-          </Box>
-        );
-      }
-      return value;
+  }, [editData]);
+
+  const handleSave = () => {
+    if (newValue.trim() === "") {
+      alert("يرجى إدخال قيمة صحيحة");
+      return;
     }
-  },
-  { 
-    field: "flow", 
-    headerName: "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)", 
-    width: 350, 
-    align: "right", 
-    headerAlign: "right",
-    renderCell: (params) => {
-      const value = params.value;
-      if (!value || value === "" || value === "null" || value === "undefined") {
-        return "لايوجد";
-      }
-      const numValue = parseFloat(value);
-      if (!isNaN(numValue)) {
-        const isPositive = numValue >= 0;
-        const color = isPositive ? '#2e7d32' : '#d32f2f';
-        const sign = isPositive ? '+' : '';
-        return (
-          <Typography sx={{ color, fontWeight: 'bold' }}>
-            {sign}{numValue.toLocaleString('en-US')} SAR
+    onSave(editData.companySymbol, editData.fieldType, parseFloat(newValue), feedback);
+  };
+
+  const getFieldDisplayName = (fieldType) => {
+    const fieldNames = {
+      'previous_quarter': 'الأرباح المبقاة للربع السابق',
+      'current_quarter': 'الأرباح المبقاة للربع الحالي',
+      'flow': 'حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)',
+      'foreign_investor_flow': 'تدفق الأرباح المبقاة للمستثمر الأجنبي',
+      'net_profit_foreign_investor': 'صافي الربح للمستثمر الأجنبي',
+      'distributed_profits_foreign_investor': 'الأرباح الموزعة للمستثمر الأجنبي'
+    };
+    return fieldNames[fieldType] || fieldType;
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      aria-labelledby="edit-modal-title"
+      aria-describedby="edit-modal-description"
+    >
+      <Box sx={{
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        width: { xs: '95%', md: '500px' },
+        maxHeight: '90vh',
+        bgcolor: 'background.paper',
+        borderRadius: 3,
+        boxShadow: 24,
+        p: 3,
+        overflow: 'auto',
+        direction: 'rtl'
+      }}>
+        {/* Header */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+          <Typography id="edit-modal-title" variant="h5" component="h2" sx={{ fontWeight: 'bold', color: '#ff9800' }}>
+            تعديل القيمة المستخرجة
           </Typography>
-        );
+          <IconButton onClick={onClose} sx={{ color: '#666' }}>
+            <CloseIcon />
+          </IconButton>
+        </Box>
+
+        {/* Content */}
+        {editData && (
+          <Box>
+            {/* Company Info */}
+            <Box sx={{ mb: 3, p: 2, bgcolor: '#f8f9fa', borderRadius: 2 }}>
+              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 1, color: '#1e6641' }}>
+                معلومات الشركة
+              </Typography>
+              <Typography><strong>الرمز:</strong> {editData.companySymbol}</Typography>
+              <Typography><strong>اسم الشركة:</strong> {editData.companyName}</Typography>
+              <Typography><strong>الحقل:</strong> {getFieldDisplayName(editData.fieldType)}</Typography>
+            </Box>
+
+            {/* Current Value */}
+            <Box sx={{ mb: 3 }}>
+              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: '#666' }}>
+                القيمة الحالية
+              </Typography>
+              <Typography sx={{ fontSize: '1.2rem', color: '#1e6641', fontWeight: 'bold' }}>
+                {editData.currentValue.toLocaleString('en-US')} SAR
+              </Typography>
+            </Box>
+
+            {/* New Value Input */}
+            <Box sx={{ mb: 3 }}>
+              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: '#ff9800' }}>
+                القيمة الجديدة
+              </Typography>
+              <TextField
+                fullWidth
+                type="number"
+                value={newValue}
+                onChange={(e) => setNewValue(e.target.value)}
+                placeholder="أدخل القيمة الصحيحة"
+                sx={{ direction: 'ltr' }}
+                inputProps={{
+                  style: { textAlign: 'right', fontSize: '1.1rem' }
+                }}
+              />
+            </Box>
+
+            {/* Feedback Input */}
+            <Box sx={{ mb: 3 }}>
+              <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, color: '#666' }}>
+                ملاحظات (اختياري)
+              </Typography>
+              <TextField
+                fullWidth
+                multiline
+                rows={3}
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                placeholder="أضف ملاحظات حول التصحيح..."
+                sx={{ direction: 'rtl' }}
+              />
+            </Box>
+
+            {/* Actions */}
+            <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+              <Button 
+                variant="outlined" 
+                onClick={onClose}
+                sx={{ color: '#666', borderColor: '#666' }}
+              >
+                إلغاء
+              </Button>
+              <Button 
+                variant="contained" 
+                onClick={handleSave}
+                disabled={loading || newValue.trim() === ""}
+                sx={{ 
+                  bgcolor: '#ff9800', 
+                  '&:hover': { bgcolor: '#f57c00' },
+                  '&:disabled': { bgcolor: '#ccc' }
+                }}
+              >
+                {loading ? <CircularProgress size={20} sx={{ color: 'white' }} /> : 'حفظ التصحيح'}
+              </Button>
+            </Box>
+          </Box>
+        )}
+      </Box>
+    </Modal>
+  );
+};
+
+// Inline Editable Cell Component
+const InlineEditableCell = ({ value, onSave, fieldType, companySymbol, companyName, initialValue }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(value?.toString() || "");
+  const [saving, setSaving] = useState(false);
+
+  const handleEdit = () => {
+    setIsEditing(true);
+    setEditValue(value?.toString() || "");
+  };
+
+  const handleSave = async () => {
+    if (editValue.trim() === "") return;
+    
+    setSaving(true);
+    try {
+      const response = await fetch('http://localhost:5002/api/correct_field_value', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_symbol: companySymbol,
+          field_type: fieldType,
+          new_value: parseFloat(editValue),
+          feedback: 'Inline edit'
+        }),
+      });
+      
+      const data = await response.json();
+      if (data.status === 'success') {
+        onSave(parseFloat(editValue));
+        setIsEditing(false);
+      } else {
+        alert('فشل في حفظ التصحيح: ' + (data.message || ''));
       }
-      return value;
+    } catch (error) {
+      alert('حدث خطأ أثناء حفظ التصحيح: ' + error.message);
+    } finally {
+      setSaving(false);
     }
-  },
-  { 
-    field: "foreign_investor_flow", 
-    headerName: "تدفق الأرباح المبقاة للمستثمر الأجنبي", 
-    width: 350, 
-    align: "right", 
-    headerAlign: "right",
-    renderCell: (params) => {
-      const value = params.value;
-      if (!value || value === "" || value === "null" || value === "undefined") {
-        return "لايوجد";
-      }
-      const numValue = parseFloat(value);
-      if (!isNaN(numValue)) {
-        return numValue.toLocaleString('en-US');
-      }
-      return value;
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    setEditValue(value?.toString() || "");
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      handleSave();
+    } else if (e.key === 'Escape') {
+      handleCancel();
     }
-  },
-];
+  };
+
+  if (isEditing) {
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <TextField
+          size="small"
+          type="number"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onKeyDown={handleKeyPress}
+          autoFocus
+          sx={{ 
+            width: '120px',
+            direction: 'ltr',
+            '& .MuiInputBase-input': { 
+              textAlign: 'right',
+              fontSize: '0.9rem',
+              padding: '4px 8px'
+            }
+          }}
+        />
+        <Tooltip title="حفظ التغيير" arrow placement="top">
+          <IconButton 
+            size="small" 
+            onClick={handleSave}
+            disabled={saving}
+            sx={{ color: '#4caf50', '&:hover': { bgcolor: '#e8f5e8' } }}
+          >
+            {saving ? <CircularProgress size={16} /> : '✓'}
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="إلغاء التغيير" arrow placement="top">
+          <IconButton 
+            size="small" 
+            onClick={handleCancel}
+            sx={{ color: '#f44336', '&:hover': { bgcolor: '#ffebee' } }}
+          >
+            ✕
+          </IconButton>
+        </Tooltip>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+      <Typography>{value?.toLocaleString('en-US') || 'لايوجد'}</Typography>
+      <Tooltip title="هل تحتاج لتغيير هذه القيمة؟ انقر هنا للتعديل" arrow placement="top">
+        <IconButton 
+          size="small" 
+          onClick={handleEdit}
+          sx={{ 
+            color: '#ff9800',
+            '&:hover': { bgcolor: '#fff3e0' },
+            opacity: 0.7,
+            '&:hover': { opacity: 1 }
+          }}
+        >
+          <EditIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
+};
 
 function App() {
   const [rows, setRows] = useState([]);
@@ -382,25 +617,57 @@ function App() {
   const [userExportsError, setUserExportsError] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState(null);
+  const [netProfitData, setNetProfitData] = useState({});
+  // Commented out since we're using inline editing
+  // const [editModalOpen, setEditModalOpen] = useState(false);
+  // const [editData, setEditData] = useState(null);
+  // const [editLoading, setEditLoading] = useState(false);
 
   // Function to fetch evidence data
-  const fetchEvidence = async (companySymbol) => {
-    setEvidenceLoading(true);
-    setEvidenceError(null);
-    
+  const fetchEvidenceData = async (companySymbol, quarter) => {
+    console.log(`Fetching evidence for ${companySymbol} quarter ${quarter}`);
     try {
-      // First fetch the extraction metadata for the company
-      const response = await fetch(`http://localhost:5002/api/extractions/${companySymbol}`);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      const response = await fetch(`http://localhost:5002/api/extractions/${companySymbol}?quarter=${quarter}`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Evidence data received:', data);
+        console.log('Evidence quarter requested:', quarter);
+        console.log('Evidence quarter in response:', data.evidence?.requested_quarter);
+        console.log('Screenshot path:', data.evidence?.screenshot_path);
+        setEvidenceData(data);
+        setEvidenceModalOpen(true);
+      } else {
+        console.error('Failed to fetch evidence data');
       }
-      const data = await response.json();
-      setEvidenceData(data);
     } catch (error) {
-      console.error('Error fetching evidence:', error);
-      setEvidenceError('فشل في تحميل دليل الاستخراج. تأكد من تشغيل خادم الأدلة.');
-    } finally {
-      setEvidenceLoading(false);
+      console.error('Error fetching evidence data:', error);
+    }
+  };
+
+  // Function to handle edit value button click - Commented out since we're using inline editing
+  /* const handleEditValue = (companySymbol, fieldType, currentValue, companyName) => {
+    setEditData({
+      companySymbol,
+      fieldType,
+      currentValue,
+      companyName,
+      newValue: currentValue.toString()
+    });
+    setEditModalOpen(true);
+  }; */
+
+  // Function to fetch net profit data
+  const fetchNetProfitData = async () => {
+    try {
+      const response = await fetch('http://localhost:5002/api/net-profit');
+      if (response.ok) {
+        const data = await response.json();
+        setNetProfitData(data);
+      } else {
+        console.error('Failed to fetch net profit data');
+      }
+    } catch (error) {
+      console.error('Error fetching net profit data:', error);
     }
   };
 
@@ -408,7 +675,7 @@ function App() {
   const handleEvidenceClick = (row) => {
     if (row.current_quarter_value && row.current_quarter_value !== "لايوجد") {
       setEvidenceModalOpen(true);
-      fetchEvidence(row.symbol);
+      fetchEvidenceData(row.symbol, row.quarter);
     }
   };
 
@@ -436,7 +703,7 @@ function App() {
   // Function to handle Excel export
   const handleExcelExport = async () => {
     try {
-      const response = await fetch('http://localhost:5002/api/export_excel');
+      const response = await fetch(`http://localhost:5002/api/export_excel?quarter=${quarterFilter}`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -558,9 +825,17 @@ function App() {
               flow: row.flow || "",
               flow_formula: row.flow_formula || "",
               year: row.year || "",
-              foreign_investor_flow: row.reinvested_earnings_flow || ""
+              foreign_investor_flow: row.reinvested_earnings_flow || "",
+              net_profit_foreign_investor: row.net_profit_foreign_investor || "",
+              distributed_profits_foreign_investor: row.distributed_profits_foreign_investor || ""
             };
-            console.log(`Mapped flow data for ${symbol} ${quarter}:`, flowMap[symbol][quarter]);
+            
+            // Debug: Log the new fields
+            console.log(`Mapped flow data for ${symbol} ${quarter}:`, {
+              ...flowMap[symbol][quarter],
+              'net_profit_foreign_investor': row.net_profit_foreign_investor,
+              'distributed_profits_foreign_investor': row.distributed_profit_foreign_investor
+            });
           }
         });
 
@@ -575,58 +850,45 @@ function App() {
           const flowData = flowMap[symbol] || {};
           const hasFlowData = symbol in flowMap;
           
-          if (hasFlowData) {
-            console.log(`Found flow data for ${symbol}:`, flowData);
+          // Create rows for all quarters (Q1, Q2, Q3, Q4) for every company
+          const allQuarters = ["Q1", "Q2", "Q3", "Q4"];
+          
+          allQuarters.forEach(quarter => {
+            const quarterData = flowData[quarter] || {};
             
-            // Create a row for each available quarter
-            Object.keys(flowData).forEach(quarter => {
-              const quarterData = flowData[quarter] || {};
-              
-              const mergedRow = {
-                ...row,
-                previous_quarter_value: quarterData.previous_value || "",
-                current_quarter_value: quarterData.current_value || "",
-                flow: quarterData.flow || "",
-                flow_formula: quarterData.flow_formula || "",
-                year: quarterData.year || "",
-                foreign_investor_flow: quarterData.foreign_investor_flow || "",
-                quarter: quarter,
-                id: symbol + "_" + quarter + "_" + idx,
-                onEvidenceClick: handleEvidenceClick, // Add the evidence click handler
-              };
-              
-              // Debug: Log first few rows to see the data structure
-              if (mergedData.length < 5 || symbol === "2222") {
-                console.log(`Row ${mergedData.length} (${symbol} ${quarter}):`, {
-                  symbol: mergedRow.symbol,
-                  company_name: mergedRow.company_name,
-                  quarter: mergedRow.quarter,
-                  flow: mergedRow.flow,
-                  flow_formula: mergedRow.flow_formula
-                });
-              }
-              
-              mergedData.push(mergedRow);
-            });
-          } else {
-            // If no flow data, create a default row
             const mergedRow = {
               ...row,
-              previous_quarter_value: "",
-              current_quarter_value: "",
-              flow: "",
-              flow_formula: "",
-              year: "",
-              foreign_investor_flow: "",
-              quarter: "Q1", // Default quarter
-              id: symbol + "_default_" + idx,
-              onEvidenceClick: handleEvidenceClick,
+              company_symbol: symbol, // Add this for net profit column access
+              previous_quarter_value: quarterData.previous_value || "",
+              current_quarter_value: quarterData.current_value || "",
+              flow: quarterData.flow || "",
+              flow_formula: quarterData.flow_formula || "",
+              year: quarterData.year || "",
+              foreign_investor_flow: quarterData.foreign_investor_flow || "",
+              net_profit_foreign_investor: quarterData.net_profit_foreign_investor || "",
+              distributed_profits_foreign_investor: quarterData.distributed_profits_foreign_investor || "",
+              quarter: quarter,
+              id: symbol + "_" + quarter + "_" + idx,
+              onEvidenceClick: handleEvidenceClick, // Add the evidence click handler
             };
+            
+            // Debug: Log first few rows to see the data structure
+            if (mergedData.length < 5 || symbol === "2222") {
+              console.log(`Row ${mergedData.length} (${symbol} ${quarter}):`, {
+                symbol: mergedRow.symbol,
+                company_name: mergedRow.company_name,
+                quarter: mergedRow.quarter,
+                flow: mergedRow.flow,
+                flow_formula: mergedRow.flow_formula
+              });
+            }
+            
             mergedData.push(mergedRow);
-          }
+          });
         });
 
         console.log("Final merged data sample:", mergedData.slice(0, 3));
+        
         setRows(mergedData);
         setLoading(false);
       })
@@ -666,8 +928,240 @@ function App() {
       });
   }, []);
 
+  // Define getColumns function inside the component to access state variables
+  const getColumns = (quarterFilter) => [
+    { field: "symbol", headerName: "رمز الشركة", width: 120, align: "right", headerAlign: "right" },
+    { field: "company_name", headerName: "الشركة", width: 200, align: "right", headerAlign: "right" },
+    { field: "foreign_ownership", headerName: "ملكية جميع المستثمرين الأجانب", width: 220, align: "right", headerAlign: "right" },
+    { field: "max_allowed", headerName: "الملكية الحالية", width: 150, align: "right", headerAlign: "right" },
+    { field: "investor_limit", headerName: "ملكية المستثمر الاستراتيجي الأجنبي", width: 220, align: "right", headerAlign: "right" },
+    { 
+      field: "previous_quarter_value", 
+      headerName: `الأرباح المبقاة للربع السابق (${quarterFilter === "Q1" ? "2024Q4" : quarterFilter === "Q2" ? "2025Q1" : quarterFilter === "Q3" ? "2025Q2" : quarterFilter === "Q4" ? "2025Q3" : "2024Q4"})`, 
+      width: 250, 
+      align: "right", 
+      headerAlign: "right",
+      renderCell: (params) => {
+        const value = params.value;
+        if (!value || value === "" || value === "null" || value === "undefined") {
+          return "لايوجد";
+        }
+        const numValue = parseFloat(value);
+        if (!isNaN(numValue)) {
+          return (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography>{numValue.toLocaleString('en-US')}</Typography>
+              <Tooltip title="عرض دليل الاستخراج - انقر لرؤية المستند الأصلي" arrow placement="top">
+                <IconButton 
+                  size="small" 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // For previous quarter, we need to determine the actual quarter
+                    let evidenceQuarter;
+                    if (quarterFilter === "Q1") {
+                      evidenceQuarter = "Annual_2024"; // Previous quarter for Q1 is Annual 2024 (not Q4 2024)
+                    } else if (quarterFilter === "Q2") {
+                      evidenceQuarter = "Q1_2025"; // Previous quarter for Q2 is Q1 2025
+                    } else if (quarterFilter === "Q3") {
+                      evidenceQuarter = "Q2_2025"; // Previous quarter for Q3 is Q2 2025
+                    } else {
+                      evidenceQuarter = "Q3_2025"; // Previous quarter for Q4 is Q3 2025
+                    }
+                    fetchEvidenceData(params.row.symbol, evidenceQuarter);
+                    setEvidenceModalOpen(true);
+                  }}
+                  sx={{ 
+                    color: '#1e6641',
+                    '&:hover': { bgcolor: '#e8f5ee' }
+                  }}
+                >
+                  <VisibilityIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          );
+        }
+        return value;
+      }
+    },
+    { 
+      field: "current_quarter_value", 
+      headerName: `الأرباح المبقاة للربع الحالي (${quarterFilter === "Q1" ? "2025Q1" : quarterFilter === "Q2" ? "2025Q2" : quarterFilter === "Q3" ? "2025Q3" : quarterFilter === "Q4" ? "2025Q4" : "2025Q1"})`, 
+      width: 250, 
+      align: "right", 
+      headerAlign: "right",
+      renderCell: (params) => {
+        const value = params.value;
+        if (!value || value === "" || value === "null" || value === "undefined") {
+          return "لايوجد";
+        }
+        const numValue = parseFloat(value);
+        if (!isNaN(numValue)) {
+          return (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography>{numValue.toLocaleString('en-US')}</Typography>
+              <Tooltip title="عرض دليل الاستخراج - انقر لرؤية المستند الأصلي" arrow placement="top">
+                <IconButton 
+                  size="small" 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // For current quarter, use the quarterFilter
+                    let evidenceQuarter;
+                    if (quarterFilter === "Q1") {
+                      evidenceQuarter = "Q1_2025";
+                    } else if (quarterFilter === "Q2") {
+                      evidenceQuarter = "Q2_2025";
+                    } else if (quarterFilter === "Q3") {
+                      evidenceQuarter = "Q3_2025";
+                    } else {
+                      evidenceQuarter = "Q4_2025";
+                    }
+                    fetchEvidenceData(params.row.symbol, evidenceQuarter);
+                    setEvidenceModalOpen(true);
+                  }}
+                  sx={{ 
+                    color: '#1e6641',
+                    '&:hover': { bgcolor: '#e8f5ee' }
+                  }}
+                >
+                  <VisibilityIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          );
+        }
+        return value;
+      }
+    },
+    { 
+      field: "flow", 
+      headerName: "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)", 
+      width: 280, 
+      align: "right", 
+      headerAlign: "right",
+      renderCell: (params) => {
+        const value = params.value;
+        if (!value || value === "" || value === "null" || value === "undefined") {
+          return "لايوجد";
+        }
+        const numValue = parseFloat(value);
+        if (!isNaN(numValue)) {
+          const isPositive = numValue >= 0;
+          const color = isPositive ? '#2e7d32' : '#d32f2f';
+          const sign = isPositive ? '+' : '';
+          return (
+            <Typography sx={{ color, fontWeight: 'bold' }}>
+              {sign}{numValue.toLocaleString('en-US')} SAR
+            </Typography>
+          );
+        }
+        return value;
+      }
+    },
+    { 
+      field: "foreign_investor_flow", 
+      headerName: "تدفق الأرباح المبقاة للمستثمر الأجنبي", 
+      width: 250, 
+      align: "right", 
+      headerAlign: "right",
+      renderCell: (params) => {
+        const value = params.value;
+        if (!value || value === "" || value === "null" || value === "undefined") {
+          return "لايوجد";
+        }
+        const numValue = parseFloat(value);
+        if (!isNaN(numValue)) {
+          const isPositive = numValue >= 0;
+          const color = isPositive ? '#2e7d32' : '#d32f2f';
+          const sign = isPositive ? '+' : '';
+          return (
+            <Typography sx={{ color, fontWeight: 'bold' }}>
+              {sign}{numValue.toLocaleString('en-US')} SAR
+            </Typography>
+          );
+        }
+        return value;
+      }
+    },
+    { 
+      field: "net_profit",
+      headerName: "صافي الربح",
+      width: 150,
+      align: "right",
+      headerAlign: "right",
+      renderCell: (params) => {
+        const companySymbol = params.row.company_symbol;
+        const companyNetProfit = netProfitData[companySymbol];
+        
+        if (companyNetProfit && companyNetProfit.quarterly_net_profit) {
+          // Map quarter filter to 2025 data
+          let quarterKey;
+          if (quarterFilter === "Q1") quarterKey = "Q1 2025";
+          else if (quarterFilter === "Q2") quarterKey = "Q2 2025";
+          else if (quarterFilter === "Q3") quarterKey = "Q3 2025";
+          
+          const value = companyNetProfit.quarterly_net_profit[quarterKey];
+          
+          if (value !== undefined && value !== null) {
+            return value.toLocaleString('en-US');
+          }
+        }
+        return "لايوجد";
+      }
+    },
+    { 
+      field: "net_profit_foreign_investor",
+      headerName: "صافي الربح للمستثمر الأجنبي",
+      width: 220,
+      align: "right",
+      headerAlign: "right",
+      renderCell: (params) => {
+        const value = params.value;
+        if (!value || value === "" || value === "null" || value === "undefined") {
+          return "لايوجد";
+        }
+        const numValue = parseFloat(value);
+        if (!isNaN(numValue)) {
+          return (
+            <Typography>{numValue.toLocaleString('en-US')}</Typography>
+          );
+        }
+        return value;
+      }
+    },
+    { 
+      field: "distributed_profits_foreign_investor",
+      headerName: "الأرباح الموزعة للمستثمر الأجنبي",
+      width: 250,
+      align: "right",
+      headerAlign: "right",
+      renderCell: (params) => {
+        const value = params.value;
+        if (!value || value === "" || value === "null" || value === "undefined") {
+          return "لايوجد";
+        }
+        const numValue = parseFloat(value);
+        if (!isNaN(numValue)) {
+          const isPositive = numValue >= 0;
+          const color = isPositive ? '#2e7d32' : '#d32f2f';
+          const sign = isPositive ? '+' : '';
+          return (
+            <Typography sx={{ color, fontWeight: 'bold' }}>
+              {sign}{numValue.toLocaleString('en-US')} SAR
+            </Typography>
+          );
+        }
+        return value;
+      }
+    }
+  ];
+
   useEffect(() => {
     fetchData();
+  }, []);
+
+  useEffect(() => {
+    fetchNetProfitData();
   }, []);
 
   // In App(), define a function to update the row and attach it to window so the modal can call it
@@ -693,32 +1187,8 @@ function App() {
   const filteredRows = useMemo(() => {
     let filtered = rows;
     
-    // Show all companies but only those with data for the selected quarter will have actual values
-    // Companies without data for the selected quarter will show "لايوجد"
-    filtered = filtered.filter(row => {
-      // Always show the row, but only if it has the selected quarter data
-      return row.quarter === quarterFilter;
-    });
-    
-    // If no companies have data for the selected quarter, show all companies with "لايوجد" values
-    if (filtered.length === 0) {
-      // Get unique companies from all rows
-      const uniqueCompanies = new Map();
-      rows.forEach(row => {
-        if (!uniqueCompanies.has(row.symbol)) {
-          uniqueCompanies.set(row.symbol, {
-            ...row,
-            previous_quarter_value: "لايوجد",
-            current_quarter_value: "لايوجد",
-            flow: "لايوجد",
-            foreign_investor_flow: "لايوجد",
-            quarter: quarterFilter,
-            id: row.symbol + "_" + quarterFilter + "_no_data"
-          });
-        }
-      });
-      filtered = Array.from(uniqueCompanies.values());
-    }
+    // Filter by quarter - now all companies have rows for all quarters
+    filtered = filtered.filter(row => row.quarter === quarterFilter);
     
     console.log(`Showing ${filtered.length} companies for ${quarterFilter}`);
     
@@ -819,28 +1289,28 @@ function App() {
         </Typography>
       </Box>
 
-      {/* Main card */}
-      <Paper elevation={4} sx={{
-        maxWidth: 1800,
-        mx: 'auto',
-        p: { xs: 2, md: 4 },
-        borderRadius: 4,
-        boxShadow: '0 6px 32px 0 rgba(30,102,65,0.10)',
-        mb: 4,
-        width: '100%',
-      }}>
-        {/* Search/filter area styled like the provided image */}
-        <Box sx={{
-          display: 'flex',
-          flexDirection: { xs: 'column', md: 'row' },
-          alignItems: { xs: 'stretch', md: 'center' },
-          justifyContent: 'space-between',
-          bgcolor: '#f3f4f6',
-          p: 3,
-          mb: 3,
-          borderRadius: 2,
-          gap: { xs: 2, md: 0 },
+              {/* Main card */}
+        <Paper elevation={4} sx={{
+          maxWidth: '85vw',
+          mx: 'auto',
+          p: { xs: 2, md: 3 },
+          borderRadius: 4,
+          boxShadow: '0 6px 32px 0 rgba(30,102,65,0.10)',
+          mb: 4,
+          width: '100%',
         }}>
+        {/* Search/filter area styled like the provided image */}
+                  <Box sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', md: 'row' },
+            alignItems: { xs: 'stretch', md: 'center' },
+            justifyContent: 'space-between',
+            bgcolor: '#f3f4f6',
+            p: 2,
+            mb: 2,
+            borderRadius: 2,
+            gap: { xs: 2, md: 0 },
+          }}>
           {/* Search box in the right corner */}
           <Box sx={{ minWidth: 320, maxWidth: 400, width: '100%', textAlign: 'right' }}>
             <Typography sx={{ mb: 1, fontWeight: 'bold', color: '#37474f', fontSize: 18 }}>
@@ -936,7 +1406,7 @@ function App() {
             </Tooltip>
           </Box>
         </Box>
-        <Box sx={{ display: "flex", gap: 2, alignItems: "center", mb: 3 }}>
+        <Box sx={{ display: "flex", gap: 2, alignItems: "center", mb: 2 }}>
             <TextField
               label="البحث في الجدول"
               variant="outlined"
@@ -980,109 +1450,109 @@ function App() {
               <MenuItem value="Q2">الربع الثاني (Q2)</MenuItem>
               <MenuItem value="Q3">الربع الثالث (Q3)</MenuItem>
             </TextField>
-            
-            <Tooltip title="تصدير الجدول إلى Excel">
-              <Button
-                variant="contained"
-                onClick={handleExcelExport}
-                sx={{
-                  bgcolor: "#1e6641",
-                  "&:hover": { bgcolor: "#155a35" },
-                  borderRadius: 2,
-                  px: 3,
-                  py: 1,
-                  textTransform: "none",
-                  fontSize: 16,
-                  fontWeight: 600,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 1,
-                }}
-              >
-                <FileDownloadIcon sx={{ fontSize: 18, color: 'white' }} />
-                تصدير الجدول
-              </Button>
-            </Tooltip>
           </Box>
-        <DataGrid
-          rows={filteredRows}
-          columns={getColumns(quarterFilter)}
-          pageSize={20}
-          loading={loading}
-          sx={{
-            bgcolor: "white",
-            fontFamily: "'Tajawal', 'Cairo', 'Noto Sans Arabic', sans-serif",
-            direction: "rtl",
-            borderRadius: 4, // more rounded corners
-            fontSize: 18,
-            boxShadow: '0 2px 16px 0 rgba(30,102,65,0.08)',
-            border: 'none',
-            "& .MuiDataGrid-columnHeaders": {
-              bgcolor: "#e3ecfa",
-              fontWeight: "bold",
-              fontSize: 18,
-              position: 'sticky',
-              top: 0,
-              zIndex: 1,
-              direction: 'rtl',
-              textAlign: 'right',
-              boxShadow: '0 2px 8px 0 rgba(30,102,65,0.10)', // sticky header shadow
-              borderTopLeftRadius: 16,
-              borderTopRightRadius: 16,
-            },
-            "& .MuiDataGrid-columnHeader, & .MuiDataGrid-columnHeaderTitle": {
+        {/* DataGrid */}
+        <Box sx={{ 
+          width: '100%', 
+          overflow: 'auto',
+          border: '1px solid #e0e0e0',
+          borderRadius: 1,
+          maxWidth: '100%',
+          p: 0
+        }}>
+          <DataGrid
+            rows={filteredRows}
+            columns={getColumns(quarterFilter)}
+            pageSize={20}
+            rowsPerPageOptions={[20, 50, 100]}
+            disableSelectionOnClick
+            autoHeight
+            componentsProps={{
+              toolbar: {
+                showQuickFilter: true,
+                quickFilterProps: { debounceMs: 500 },
+              },
+            }}
+            // Optimize column rendering
+            columnBuffer={1}
+            columnThreshold={1}
+            sx={{
+              bgcolor: "white",
+              fontFamily: "'Tajawal', 'Cairo', 'Noto Sans Arabic', sans-serif",
               direction: "rtl",
-              textAlign: "right",
-              justifyContent: "flex-end",
-              paddingRight: "12px !important",
-              paddingLeft: "0 !important",
-              display: 'flex',
-            },
-            "& .MuiDataGrid-columnHeaderTitleContainer": {
-              flexDirection: "row-reverse",
-              direction: 'rtl',
-              display: 'flex',
-              justifyContent: 'flex-end',
-            },
-            "& .MuiDataGrid-columnHeaderTitleContainerContent": {
-              textAlign: "right",
-              justifyContent: "flex-end",
-              direction: 'rtl',
-              display: 'flex',
-            },
-            "& .MuiDataGrid-row": {
-              minHeight: 44,
-              maxHeight: 44,
-              transition: 'background 0.2s, box-shadow 0.2s',
-              borderRadius: 2,
-            },
-            "& .MuiDataGrid-row:nth-of-type(even)": { bgcolor: "#f7fafc" }, // lighter stripe
-            "& .MuiDataGrid-row:hover": {
-              bgcolor: "#e3f2fd",
-              boxShadow: '0 2px 8px 0 rgba(30,102,65,0.08)',
-              cursor: 'pointer',
-            },
-            "& .MuiDataGrid-footerContainer": { bgcolor: '#f4f6fa', fontWeight: 'bold', borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
-            "& .MuiDataGrid-virtualScroller": { minHeight: 300 },
-            "& .MuiDataGrid-cell": {
-              borderBottom: '1px solid #e0e0e0',
-              fontWeight: 500,
-              fontSize: 17,
-              letterSpacing: '0.01em',
-            },
-            "& .MuiDataGrid-cell:focus, & .MuiDataGrid-columnHeader:focus": {
-              outline: 'none',
-            },
-            "& .MuiDataGrid-root": {
               borderRadius: 4,
-            },
-          }}
-          disableRowSelectionOnClick
-          autoHeight
-          localeText={{
-            noRowsLabel: 'لا توجد بيانات متاحة',
-          }}
-        />
+              fontSize: 18,
+              boxShadow: '0 2px 16px 0 rgba(30,102,65,0.08)',
+              border: 'none',
+              "& .MuiDataGrid-columnHeaders": {
+                bgcolor: "#e3ecfa",
+                fontWeight: "bold",
+                fontSize: 18,
+                position: 'sticky',
+                top: 0,
+                zIndex: 1,
+                direction: 'rtl',
+                textAlign: 'right',
+                boxShadow: '0 2px 8px 0 rgba(30,102,65,0.10)',
+                borderTopLeftRadius: 16,
+                borderTopRightRadius: 16,
+              },
+              "& .MuiDataGrid-columnHeader, & .MuiDataGrid-columnHeaderTitle": {
+                direction: "rtl",
+                textAlign: "right",
+                justifyContent: "flex-end",
+                paddingRight: "12px !important",
+                paddingLeft: "0 !important",
+                display: 'flex',
+              },
+              "& .MuiDataGrid-columnHeaderTitleContainer": {
+                flexDirection: "row-reverse",
+                direction: 'rtl',
+                display: 'flex',
+                justifyContent: 'flex-end',
+              },
+              "& .MuiDataGrid-columnHeaderTitleContainerContent": {
+                textAlign: "right",
+                justifyContent: "flex-end",
+                direction: 'rtl',
+                display: 'flex',
+              },
+              "& .MuiDataGrid-row": {
+                minHeight: 44,
+                maxHeight: 44,
+                transition: 'background 0.2s, box-shadow 0.2s',
+                borderRadius: 2,
+              },
+              "& .MuiDataGrid-row:nth-of-type(even)": { bgcolor: "#f7fafc" },
+              "& .MuiDataGrid-row:hover": {
+                bgcolor: "#e3f2fd",
+                boxShadow: '0 2px 8px 0 rgba(30,102,65,0.08)',
+                cursor: 'pointer',
+              },
+              "& .MuiDataGrid-footerContainer": { 
+                bgcolor: '#f4f6fa', 
+                fontWeight: 'bold', 
+                borderBottomLeftRadius: 16, 
+                borderBottomRightRadius: 16 
+              },
+              "& .MuiDataGrid-virtualScroller": { minHeight: 300 },
+              "& .MuiDataGrid-cell": {
+                borderBottom: '1px solid #e0e0e0',
+                fontWeight: 500,
+                fontSize: 17,
+                letterSpacing: '0.01em',
+                direction: 'rtl',
+                textAlign: 'right',
+              },
+              "& .MuiDataGrid-cell:focus, & .MuiDataGrid-columnHeader:focus": {
+                outline: 'none',
+              },
+              "& .MuiDataGrid-root": {
+                borderRadius: 4,
+              },
+            }}
+          />
+        </Box>
       </Paper>
       
       {/* Evidence Modal */}
@@ -1092,7 +1562,46 @@ function App() {
         evidenceData={evidenceData}
         loading={evidenceLoading}
         error={evidenceError}
+        onDataUpdate={fetchData}
       />
+      
+      {/* Edit Value Modal - Commented out since we're using inline editing */}
+      {/* <EditValueModal
+        open={editModalOpen}
+        onClose={() => setEditModalOpen(false)}
+        editData={editData}
+        onSave={async (companySymbol, fieldType, newValue, feedback) => {
+          setEditLoading(true);
+          try {
+            const response = await fetch('http://localhost:5002/api/correct_retained_earnings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                company_symbol: companySymbol,
+                field_type: fieldType,
+                correct_value: newValue,
+                feedback: feedback,
+              }),
+            });
+            const data = await response.json();
+            if (data.status === 'success' && data.updated) {
+              if (typeof window.updateRowAfterCorrection === 'function') {
+                window.updateRowAfterCorrection(data.updated);
+              }
+              setEditModalOpen(false);
+              setEditLoading(false);
+            } else {
+              alert('فشل في حفظ التصحيح: ' + (data.message || ''));
+              setEditLoading(false);
+            }
+          } catch (e) {
+            alert('حدث خطأ أثناء حفظ التصحيح: ' + e.message);
+            setEditModalOpen(false);
+            setEditLoading(false);
+          }
+        }}
+        loading={editLoading}
+      /> */}
       
       {/* Footer */}
       <Box sx={{ textAlign: 'center', color: '#888', py: 2, fontSize: 16, mt: 'auto' }}>
