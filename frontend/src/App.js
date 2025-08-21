@@ -36,15 +36,7 @@ import ExpandMore from '@mui/icons-material/ExpandMore';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import MenuItem from '@mui/material/MenuItem';
 import EditIcon from '@mui/icons-material/Edit';
-import AddIcon from '@mui/icons-material/Add';
-import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
-import AccessTimeIcon from '@mui/icons-material/AccessTime';
-import MoreVertIcon from '@mui/icons-material/MoreVert';
-import Chip from '@mui/material/Chip';
-import FormControl from '@mui/material/FormControl';
-import Select from '@mui/material/Select';
-import InputLabel from '@mui/material/InputLabel';
-import OutlinedInput from '@mui/material/OutlinedInput';
+import Add from '@mui/icons-material/Add';
 
 // Evidence Modal Component
 const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpdate }) => {
@@ -115,7 +107,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                   maxHeight: '50vh'
                 }}>
                   <img 
-                    src={`http://localhost:5002/api/evidence/${evidenceData.company_symbol}.png?quarter=${evidenceData.evidence?.requested_quarter || 'Q1_2025'}&t=${Date.now()}`}
+                    src={`http://localhost:5003/api/evidence/${evidenceData.company_symbol}.png?quarter=${evidenceData.evidence?.requested_quarter || 'Q1_2025'}&t=${Date.now()}`}
                     alt="Evidence Screenshot"
                     style={{ 
                       maxWidth: '100%', 
@@ -124,7 +116,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                     }}
                     onLoad={() => {
                       console.log('Evidence image loaded with quarter:', evidenceData.evidence?.requested_quarter);
-                      console.log('Full image URL:', `http://localhost:5002/api/evidence/${evidenceData.company_symbol}.png?quarter=${evidenceData.evidence?.requested_quarter || 'Q1_2025'}&t=${Date.now()}`);
+                      console.log('Full image URL:', `http://localhost:5003/api/evidence/${evidenceData.company_symbol}.png?quarter=${evidenceData.evidence?.requested_quarter || 'Q1_2025'}&t=${Date.now()}`);
                     }}
                   />
                 </Box>
@@ -179,7 +171,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                             
                             console.log('Sending correction request:', requestBody);
                             
-                            const response = await fetch('http://localhost:5002/api/correct_field_value', {
+                            const response = await fetch('http://localhost:5003/api/correct_field_value', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify(requestBody),
@@ -301,7 +293,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                         setSubmitted(true);
                         // Send correction to backend
                         try {
-                          const res = await fetch('http://localhost:5002/api/correct_retained_earnings', {
+                          const res = await fetch('http://localhost:5003/api/correct_retained_earnings', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -505,7 +497,7 @@ const InlineEditableCell = ({ value, onSave, fieldType, companySymbol, companyNa
     
     setSaving(true);
     try {
-      const response = await fetch('http://localhost:5002/api/correct_field_value', {
+      const response = await fetch('http://localhost:5003/api/correct_field_value', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -626,33 +618,20 @@ function App() {
   const [userExportsError, setUserExportsError] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState(null);
-  const [selectedExports, setSelectedExports] = useState(new Set());
-  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [netProfitData, setNetProfitData] = useState({});
-  
-  // Enhanced Time Management System
-  const [customTimePeriods, setCustomTimePeriods] = useState([]);
-  const [addTimePeriodModalOpen, setAddTimePeriodModalOpen] = useState(false);
-  const [editTimePeriodModalOpen, setEditTimePeriodModalOpen] = useState(false);
-  const [selectedTimePeriod, setSelectedTimePeriod] = useState(null);
-  const [newTimePeriod, setNewTimePeriod] = useState({
-    name: '',
-    type: 'custom', // 'quarterly', 'monthly', 'weekly', 'custom'
-    startDate: '',
-    endDate: '',
-    description: '',
-    color: '#1e6641'
-  });
   // Commented out since we're using inline editing
   // const [editModalOpen, setEditModalOpen] = useState(false);
   // const [editData, setEditData] = useState(null);
   // const [editLoading, setEditLoading] = useState(false);
+  const [customExportDate, setCustomExportDate] = useState("");
+  const [customFileName, setCustomFileName] = useState("");
+  const [customExportExpanded, setCustomExportExpanded] = useState(false);
 
   // Function to fetch evidence data
   const fetchEvidenceData = async (companySymbol, quarter) => {
     console.log(`Fetching evidence for ${companySymbol} quarter ${quarter}`);
     try {
-      const response = await fetch(`http://localhost:5002/api/extractions/${companySymbol}?quarter=${quarter}`);
+      const response = await fetch(`http://localhost:5003/api/extractions/${companySymbol}?quarter=${quarter}`);
       if (response.ok) {
         const data = await response.json();
         console.log('Evidence data received:', data);
@@ -684,7 +663,7 @@ function App() {
   // Function to fetch net profit data
   const fetchNetProfitData = async () => {
     try {
-      const response = await fetch('http://localhost:5002/api/net-profit');
+      const response = await fetch('http://localhost:5003/api/net-profit');
       if (response.ok) {
         const data = await response.json();
         setNetProfitData(data);
@@ -708,7 +687,7 @@ function App() {
   const handleReset = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5002/api/refresh', {
+      const response = await fetch('http://localhost:5003/api/refresh', {
         method: 'POST',
       });
       const data = await response.json();
@@ -725,182 +704,10 @@ function App() {
     }
   };
 
-  // Function to handle export selection
-  const handleExportSelection = (filename, checked) => {
-    const newSelected = new Set(selectedExports);
-    if (checked) {
-      newSelected.add(filename);
-    } else {
-      newSelected.delete(filename);
-    }
-    setSelectedExports(newSelected);
-  };
-
-  // Function to handle select all exports
-  const handleSelectAllExports = (checked) => {
-    if (checked) {
-      setSelectedExports(new Set(userExports.map(file => file.filename)));
-    } else {
-      setSelectedExports(new Set());
-    }
-  };
-
-  // Function to add custom time period
-  const handleAddTimePeriod = () => {
-    if (!newTimePeriod.name || !newTimePeriod.startDate || !newTimePeriod.endDate) {
-      alert('يرجى ملء جميع الحقول المطلوبة');
-      return;
-    }
-    
-    const period = {
-      id: Date.now().toString(),
-      ...newTimePeriod,
-      createdAt: new Date().toISOString()
-    };
-    
-    setCustomTimePeriods(prev => [...prev, period]);
-    setNewTimePeriod({
-      name: '',
-      type: 'custom',
-      startDate: '',
-      endDate: '',
-      description: '',
-      color: '#1e6641'
-    });
-    setAddTimePeriodModalOpen(false);
-  };
-
-  // Function to edit time period
-  const handleEditTimePeriod = () => {
-    if (!selectedTimePeriod) return;
-    
-    setCustomTimePeriods(prev => 
-      prev.map(p => p.id === selectedTimePeriod.id ? selectedTimePeriod : p)
-    );
-    setEditTimePeriodModalOpen(false);
-    setSelectedTimePeriod(null);
-  };
-
-  // Function to delete time period
-  const handleDeleteTimePeriod = (periodId) => {
-    if (window.confirm('هل أنت متأكد من حذف هذه الفترة الزمنية؟')) {
-      setCustomTimePeriods(prev => prev.filter(p => p.id !== periodId));
-    }
-  };
-
-  // Function to export data for specific time period
-  const handleExportForTimePeriod = async (period) => {
-    try {
-      const response = await fetch(`http://localhost:5002/api/export_excel?quarter=${quarterFilter}&start_date=${period.startDate}&end_date=${period.endDate}&period_name=${period.name}`);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      // Get the filename from the response headers
-      const contentDisposition = response.headers.get('content-disposition');
-      let filename = `dashboard_${period.name}_${new Date().toISOString().split('T')[0]}.xlsx`;
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
-      
-      // Create blob and download
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      
-      // Refresh user exports
-      fetchUserExports();
-      
-      alert(`تم تصدير البيانات للفترة: ${period.name}`);
-    } catch (error) {
-      console.error('Error exporting for time period:', error);
-      alert('فشل في تصدير البيانات: ' + error.message);
-    }
-  };
-
-  // Function to fetch user exports
-  const fetchUserExports = async () => {
-    setUserExportsLoading(true);
-    try {
-      const response = await fetch('http://localhost:5002/api/user_exports');
-      if (response.ok) {
-        const data = await response.json();
-        setUserExports(data);
-        setUserExportsError(null);
-      } else {
-        setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
-      }
-    } catch (error) {
-      setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
-    } finally {
-      setUserExportsLoading(false);
-    }
-  };
-
-  // Function to handle bulk delete
-  const handleBulkDelete = async () => {
-    if (selectedExports.size === 0) return;
-    
-    console.log('Starting bulk delete for files:', Array.from(selectedExports));
-    console.log('Current userExports:', userExports);
-    
-    try {
-      const deletePromises = Array.from(selectedExports).map(filename => {
-        console.log(`Processing delete for filename: ${filename}`);
-        
-        // Find the file by filename
-        const file = userExports.find(f => f.filename === filename);
-        if (!file) {
-          console.error(`File not found: ${filename}`);
-          return Promise.reject(new Error(`File not found: ${filename}`));
-        }
-        
-        console.log(`Found file:`, file);
-        
-        return fetch(`http://localhost:5002/api/user_exports/${filename}`, { method: 'DELETE' })
-          .then(response => {
-            console.log(`Delete response for ${filename}:`, response.status, response.statusText);
-            if (!response.ok) {
-              throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-          });
-      });
-      
-      console.log('Delete promises created:', deletePromises.length);
-      const results = await Promise.all(deletePromises);
-      console.log('Delete results:', results);
-      
-      // Remove deleted files from state
-      setUserExports(prev => prev.filter(file => !selectedExports.has(file.filename)));
-      setSelectedExports(new Set());
-      setBulkDeleteDialogOpen(false);
-      
-      // Refresh the list
-      fetchUserExports();
-      
-      // Show success message
-      alert(`تم حذف ${selectedExports.size} ملفات بنجاح`);
-      
-    } catch (error) {
-      console.error('Error deleting files:', error);
-      alert('حدث خطأ أثناء حذف الملفات: ' + error.message);
-    }
-  };
-
   // Function to handle Excel export
   const handleExcelExport = async () => {
     try {
-      const response = await fetch(`http://localhost:5002/api/export_excel?quarter=${quarterFilter}`);
+      const response = await fetch(`http://localhost:5003/api/export_excel?quarter=${quarterFilter}`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -928,7 +735,7 @@ function App() {
       
       // Refetch user exports so the new file appears in the sidebar
       setUserExportsLoading(true);
-      fetch('http://localhost:5002/api/user_exports')
+      fetch('http://localhost:5003/api/user_exports')
         .then(res => res.json())
         .then(data => {
           setUserExports(data);
@@ -956,7 +763,7 @@ function App() {
       });
 
     // Load quarterly flow data (CSV) from backend API
-    const loadQuarterlyFlowData = fetch("http://localhost:5002/api/retained_earnings_flow.csv")
+    const loadQuarterlyFlowData = fetch("http://localhost:5003/api/retained_earnings_flow.csv")
       .then((res) => {
         if (!res.ok) {
           throw new Error(`HTTP error! status: ${res.status}`);
@@ -1097,14 +904,23 @@ function App() {
 
   // Fetch archived snapshots
   useEffect(() => {
+    console.log('🔄 Fetching archived snapshots...');
     setSnapshotsLoading(true);
-    fetch('http://localhost:5002/api/ownership_snapshots')
-      .then(res => res.json())
+    fetch('http://localhost:5003/api/ownership_snapshots')
+      .then(res => {
+        console.log('📡 Snapshots response status:', res.status);
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        return res.json();
+      })
       .then(data => {
+        console.log('✅ Snapshots data received:', data);
         setSnapshots(data);
         setSnapshotsLoading(false);
       })
       .catch(err => {
+        console.error('❌ Error fetching snapshots:', err);
         setSnapshotsError('فشل في تحميل ملفات الفترات السابقة');
         setSnapshotsLoading(false);
       });
@@ -1112,18 +928,71 @@ function App() {
 
   // Fetch user exports
   useEffect(() => {
+    console.log('🔄 Fetching user exports...');
     setUserExportsLoading(true);
-    fetch('http://localhost:5002/api/user_exports')
-      .then(res => res.json())
+    fetch('http://localhost:5003/api/user_exports')
+      .then(res => {
+        console.log('📡 User exports response status:', res.status);
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        return res.json();
+      })
       .then(data => {
+        console.log('✅ User exports data received:', data);
         setUserExports(data);
         setUserExportsLoading(false);
       })
       .catch(err => {
+        console.error('❌ Error fetching user exports:', err);
         setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
         setUserExportsLoading(false);
       });
   }, []);
+
+  // Function to fetch snapshots (for refreshing after quarterly archive)
+  const fetchSnapshots = () => {
+    console.log('🔄 Manual fetchSnapshots called...');
+    setSnapshotsLoading(true);
+    fetch('http://localhost:5003/api/ownership_snapshots')
+      .then(res => {
+        console.log('📡 Manual snapshots response status:', res.status);
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then(data => {
+        console.log('✅ Manual snapshots data received:', data);
+        setSnapshots(data);
+        setSnapshotsLoading(false);
+      })
+      .catch(err => {
+        console.error('❌ Error in manual fetchSnapshots:', err);
+        setSnapshotsError('فشل في تحميل ملفات الفترات السابقة');
+        setSnapshotsLoading(false);
+      });
+  };
+
+  // Helper function to determine quarter from date
+  const getQuarterFromDate = (dateString) => {
+    if (!dateString) return '';
+    
+    try {
+      const date = new Date(dateString);
+      const month = date.getMonth() + 1; // getMonth() returns 0-11
+      const year = date.getFullYear();
+      
+      if (month >= 1 && month <= 3) return `Q1 ${year}`;
+      if (month >= 4 && month <= 6) return `Q2 ${year}`;
+      if (month >= 7 && month <= 9) return `Q3 ${year}`;
+      if (month >= 10 && month <= 12) return `Q4 ${year}`;
+      
+      return '';
+    } catch (error) {
+      return '';
+    }
+  };
 
   // Define getColumns function inside the component to access state variables
   const getColumns = (quarterFilter) => [
@@ -1417,7 +1286,7 @@ function App() {
   const confirmDeleteExport = async () => {
     if (!fileToDelete) return;
     try {
-      await fetch(`http://localhost:5002/api/user_exports/${fileToDelete.filename}`, { method: 'DELETE' });
+      await fetch(`http://localhost:5003/api/user_exports/${fileToDelete.filename}`, { method: 'DELETE' });
       setUserExports((prev) => prev.filter(f => f.filename !== fileToDelete.filename));
     } catch (e) {}
     setDeleteDialogOpen(false);
@@ -1427,6 +1296,86 @@ function App() {
   const cancelDeleteExport = () => {
     setDeleteDialogOpen(false);
     setFileToDelete(null);
+  };
+
+  // Function to handle custom date export
+  const handleCustomDateExport = async () => {
+    try {
+      setLoading(true);
+      
+      // Build the API URL with custom date and filename
+      let apiUrl = `http://localhost:5003/api/export_excel?quarter=${quarterFilter}&custom_date=${customExportDate}`;
+      if (customFileName.trim()) {
+        apiUrl += `&custom_filename=${encodeURIComponent(customFileName.trim())}`;
+      }
+      
+      const response = await fetch(apiUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      // Get the filename from the response headers
+      const contentDisposition = response.headers.get('content-disposition');
+      let filename = 'dashboard_table.xlsx';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      // Create blob and download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      // Clear the custom inputs after successful export
+      setCustomExportDate("");
+      setCustomFileName("");
+      
+      // Refetch user exports so the new file appears in the sidebar
+      setUserExportsLoading(true);
+      fetch('http://localhost:5003/api/user_exports')
+        .then(res => res.json())
+        .then(data => {
+          setUserExports(data);
+          setUserExportsLoading(false);
+        })
+        .catch(err => {
+          setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
+          setUserExportsLoading(false);
+        });
+        
+      // Show enhanced success message
+      const successMessage = `✅ تم التصدير بنجاح!\n\n📁 اسم الملف: ${filename}\n📅 التاريخ: ${customExportDate}\n🎯 الربع: ${getQuarterFromDate(customExportDate)}\n\nتم حفظ الملف في مجلد التنزيلات`;
+      alert(successMessage);
+      
+    } catch (error) {
+      console.error('Error exporting to Excel:', error);
+      
+      // Show enhanced error message
+      let errorMessage = '❌ فشل في تصدير ملف Excel\n\n';
+      
+      if (error.message.includes('404')) {
+        errorMessage += '🔍 السبب: لم يتم العثور على البيانات المطلوبة\n💡 الحل: تأكد من وجود البيانات للربع المحدد';
+      } else if (error.message.includes('500')) {
+        errorMessage += '🔧 السبب: خطأ في الخادم\n💡 الحل: حاول مرة أخرى أو اتصل بالدعم الفني';
+      } else if (error.message.includes('fetch')) {
+        errorMessage += '🌐 السبب: مشكلة في الاتصال\n💡 الحل: تأكد من تشغيل الخادم';
+      } else {
+        errorMessage += `🔍 السبب: ${error.message}\n💡 الحل: حاول مرة أخرى`;
+      }
+      
+      alert(errorMessage);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -1635,6 +1584,8 @@ function App() {
               <MenuItem value="Q2">الربع الثاني (Q2)</MenuItem>
               <MenuItem value="Q3">الربع الثالث (Q3)</MenuItem>
             </TextField>
+            
+            
           </Box>
         {/* DataGrid */}
         <Box sx={{ 
@@ -1758,7 +1709,7 @@ function App() {
         onSave={async (companySymbol, fieldType, newValue, feedback) => {
           setEditLoading(true);
           try {
-            const response = await fetch('http://localhost:5002/api/correct_retained_earnings', {
+            const response = await fetch('http://localhost:5003/api/correct_retained_earnings', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -1804,200 +1755,12 @@ function App() {
         </DialogActions>
       </Dialog>
 
-      {/* Bulk delete confirmation dialog */}
-      <Dialog open={bulkDeleteDialogOpen} onClose={() => setBulkDeleteDialogOpen(false)}>
-        <DialogTitle sx={{ fontWeight: 700, color: '#1e6641' }}>تأكيد الحذف الجماعي</DialogTitle>
-        <DialogContent>
-          <Typography>
-            هل أنت متأكد أنك تريد حذف {selectedExports.size} ملفات محددة؟ لا يمكن التراجع عن هذه العملية.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setBulkDeleteDialogOpen(false)} sx={{ color: '#37474f' }}>إلغاء</Button>
-          <Button onClick={handleBulkDelete} sx={{ color: '#b71c1c', fontWeight: 700 }}>حذف {selectedExports.size} ملفات</Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Add Time Period Modal */}
-      <Dialog open={addTimePeriodModalOpen} onClose={() => setAddTimePeriodModalOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700, color: '#1e6641', textAlign: 'center' }}>
-          إضافة فترة زمنية جديدة
-        </DialogTitle>
-        <DialogContent>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, pt: 2 }}>
-            <TextField
-              label="اسم الفترة"
-              value={newTimePeriod.name}
-              onChange={(e) => setNewTimePeriod(prev => ({ ...prev, name: e.target.value }))}
-              placeholder="مثال: شهر رمضان 2025"
-              fullWidth
-              size="small"
-            />
-            
-            <FormControl fullWidth size="small">
-              <InputLabel>نوع الفترة</InputLabel>
-              <Select
-                value={newTimePeriod.type}
-                onChange={(e) => setNewTimePeriod(prev => ({ ...prev, type: e.target.value }))}
-                label="نوع الفترة"
-              >
-                <MenuItem value="quarterly">ربع سنوي</MenuItem>
-                <MenuItem value="monthly">شهري</MenuItem>
-                <MenuItem value="weekly">أسبوعي</MenuItem>
-                <MenuItem value="custom">مخصص</MenuItem>
-              </Select>
-            </FormControl>
-            
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              <TextField
-                label="تاريخ البداية"
-                type="date"
-                value={newTimePeriod.startDate}
-                onChange={(e) => setNewTimePeriod(prev => ({ ...prev, startDate: e.target.value }))}
-                fullWidth
-                size="small"
-                InputLabelProps={{ shrink: true }}
-              />
-              <TextField
-                label="تاريخ النهاية"
-                type="date"
-                value={newTimePeriod.endDate}
-                onChange={(e) => setNewTimePeriod(prev => ({ ...prev, endDate: e.target.value }))}
-                fullWidth
-                size="small"
-                InputLabelProps={{ shrink: true }}
-              />
-            </Box>
-            
-            <TextField
-              label="وصف (اختياري)"
-              value={newTimePeriod.description}
-              onChange={(e) => setNewTimePeriod(prev => ({ ...prev, description: e.target.value }))}
-              placeholder="وصف مختصر للفترة"
-              fullWidth
-              size="small"
-              multiline
-              rows={2}
-            />
-            
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Typography sx={{ fontSize: 14, color: '#666' }}>لون الفترة:</Typography>
-              <input
-                type="color"
-                value={newTimePeriod.color}
-                onChange={(e) => setNewTimePeriod(prev => ({ ...prev, color: e.target.value }))}
-                style={{ width: 40, height: 40, border: 'none', borderRadius: 4, cursor: 'pointer' }}
-              />
-            </Box>
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 3 }}>
-          <Button onClick={() => setAddTimePeriodModalOpen(false)} sx={{ color: '#666' }}>
-            إلغاء
-          </Button>
-          <Button 
-            onClick={handleAddTimePeriod} 
-            variant="contained"
-            sx={{ bgcolor: '#1e6641', '&:hover': { bgcolor: '#14532d' } }}
-          >
-            إضافة الفترة
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Edit Time Period Modal */}
-      <Dialog open={editTimePeriodModalOpen} onClose={() => setEditTimePeriodModalOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 700, color: '#1e6641', textAlign: 'center' }}>
-          تعديل الفترة الزمنية
-        </DialogTitle>
-        <DialogContent>
-          {selectedTimePeriod && (
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, pt: 2 }}>
-              <TextField
-                label="اسم الفترة"
-                value={selectedTimePeriod.name}
-                onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, name: e.target.value }))}
-                fullWidth
-                size="small"
-              />
-              
-              <FormControl fullWidth size="small">
-                <InputLabel>نوع الفترة</InputLabel>
-                <Select
-                  value={selectedTimePeriod.type}
-                  onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, type: e.target.value }))}
-                  label="نوع الفترة"
-                >
-                  <MenuItem value="quarterly">ربع سنوي</MenuItem>
-                  <MenuItem value="monthly">شهري</MenuItem>
-                  <MenuItem value="weekly">أسبوعي</MenuItem>
-                  <MenuItem value="custom">مخصص</MenuItem>
-                </Select>
-              </FormControl>
-              
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <TextField
-                  label="تاريخ البداية"
-                  type="date"
-                  value={selectedTimePeriod.startDate}
-                  onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, startDate: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  InputLabelProps={{ shrink: true }}
-                />
-                <TextField
-                  label="تاريخ النهاية"
-                  type="date"
-                  value={selectedTimePeriod.endDate}
-                  onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, endDate: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  InputLabelProps={{ shrink: true }}
-                />
-              </Box>
-              
-              <TextField
-                label="وصف (اختياري)"
-                value={selectedTimePeriod.description}
-                onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, description: e.target.value }))}
-                fullWidth
-                size="small"
-                multiline
-                rows={2}
-              />
-              
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Typography sx={{ fontSize: 14, color: '#666' }}>لون الفترة:</Typography>
-                <input
-                  type="color"
-                  value={selectedTimePeriod.color}
-                  onChange={(e) => setSelectedTimePeriod(prev => ({ ...prev, color: e.target.value }))}
-                  style={{ width: 40, height: 40, border: 'none', borderRadius: 4, cursor: 'pointer' }}
-                />
-              </Box>
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 3 }}>
-          <Button onClick={() => setEditTimePeriodModalOpen(false)} sx={{ color: '#666' }}>
-            إلغاء
-          </Button>
-          <Button 
-            onClick={handleEditTimePeriod} 
-            variant="contained"
-            sx={{ bgcolor: '#1e6641', '&:hover': { bgcolor: '#14532d' } }}
-          >
-            حفظ التعديلات
-          </Button>
-        </DialogActions>
-      </Dialog>
-
       {/* Sidebar Drawer */}
       <Drawer
         anchor="left"
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        PaperProps={{ sx: { width: 420, bgcolor: '#f8f9fa', borderTopRightRadius: 16, borderBottomRightRadius: 16 } }}
+        PaperProps={{ sx: { width: 340, bgcolor: '#f8f9fa', borderTopRightRadius: 16, borderBottomRightRadius: 16 } }}
       >
         <Box
           sx={{
@@ -2005,13 +1768,13 @@ function App() {
             alignItems: 'center',
             justifyContent: 'space-between',
             px: 3,
-            py: 3.5,
+            py: 2.5,
             bgcolor: '#fff',
             borderBottom: '1.5px solid #e0e0e0',
             boxShadow: '0 2px 8px 0 rgba(30,102,65,0.04)',
             borderTopRightRadius: 16,
             borderTopLeftRadius: 16,
-            minHeight: 88,
+            minHeight: 72,
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
@@ -2042,894 +1805,402 @@ function App() {
           </Box>
         </Box>
         {/* Soft divider and extra space below header */}
-        <Box sx={{ height: 24 }} />
-        <Box sx={{ width: '100%', height: 2, bgcolor: '#f4f6fa', mb: 3, borderRadius: 2 }} />
-        {/* Modern File Management Header */}
-        <Box sx={{ px: 3, mb: 3 }}>
+        <Box sx={{ height: 18 }} />
+        <Box sx={{ width: '100%', height: 2, bgcolor: '#f4f6fa', mb: 2, borderRadius: 2 }} />
+        {/* User-Saved Exports Section */}
+        <Box sx={{ mt: 2, pb: 0, px: 0 }}>
           <Box sx={{
             display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
-            bgcolor: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)',
-            borderRadius: 3,
-            p: 2.5,
-            border: '1px solid #e2e8f0',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-            position: 'relative',
-            overflow: 'hidden',
-            '&::before': {
-              content: '""',
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: '3px',
-              background: 'linear-gradient(90deg, #1e6641 0%, #10b981 100%)',
-            }
+            alignItems: 'center',
+            bgcolor: '#e9f5ee',
+            borderRadius: 4,
+            px: 2,
+            py: 1.2,
+            width: '100%',
+            boxSizing: 'border-box',
+            mb: 1.5,
+            gap: 1.5,
           }}>
-            {/* Header Row */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Box sx={{
-                width: 40,
-                height: 40,
-                bgcolor: '#1e6641',
-                borderRadius: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 4px 12px rgba(30,102,65,0.3)'
-              }}>
-                <FolderOpenIcon sx={{ color: 'white', fontSize: 20 }} />
-              </Box>
-              <Box>
-                <Typography sx={{
-                  fontWeight: 800,
-                  color: '#1e293b',
-                  fontSize: 18,
-                  mb: 0.5
-                }}>
-                  ملفاتك المصدّرة
-                </Typography>
-                <Typography sx={{
-                  color: '#64748b',
-                  fontSize: 13,
-                  fontWeight: 500
-                }}>
-                  {userExports.length} ملف محفوظ
-                </Typography>
-              </Box>
-            </Box>
-            
-            {/* Selection Controls Row */}
-            {userExports.length > 0 && (
-              <Box sx={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'space-between',
-                pt: 1,
-                borderTop: '1px solid #e2e8f0'
-              }}>
-                <Box sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1.5,
-                  bgcolor: 'white',
-                  px: 2,
-                  py: 1,
-                  borderRadius: 2,
-                  border: '1px solid #e2e8f0'
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedExports.size === userExports.length}
-                    onChange={(e) => handleSelectAllExports(e.target.checked)}
-                    style={{ 
-                      width: 16, 
-                      height: 16, 
-                      accentColor: '#1e6641',
-                      cursor: 'pointer'
-                    }}
-                  />
-                  <Typography sx={{ 
-                    fontSize: 13, 
-                    color: '#475569', 
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}>
-                    تحديد الكل
-                  </Typography>
-                </Box>
-                
-                {selectedExports.size > 0 && (
-                  <Button
-                    variant="contained"
-                    size="small"
-                    onClick={() => setBulkDeleteDialogOpen(true)}
-                    sx={{ 
-                      borderRadius: 2,
-                      textTransform: 'none',
-                      bgcolor: '#ef4444',
-                      color: 'white',
-                      px: 3,
-                      py: 1.5,
-                      fontSize: 13,
-                      fontWeight: 600,
-                      boxShadow: '0 2px 8px rgba(239,68,68,0.3)',
-                      minWidth: 'fit-content',
-                      '&:hover': { 
-                        bgcolor: '#dc2626',
-                        boxShadow: '0 4px 12px rgba(239,68,68,0.4)'
-                      }
-                    }}
-                    startIcon={<DeleteOutlineIcon sx={{ fontSize: 16 }} />}
-                  >
-                    حذف {selectedExports.size} ملف
-                  </Button>
-                )}
-              </Box>
-            )}
+            <Box sx={{ width: 3, height: 24, bgcolor: '#1e6641', borderRadius: 6, mr: 0 }} />
+            <Typography
+              variant="subtitle1"
+              sx={{
+                fontWeight: 700,
+                color: '#1e6641',
+                fontSize: 18,
+                letterSpacing: 0.1,
+                minWidth: 0,
+                pr: 1,
+              }}
+            >
+              ملفاتك المصدّرة
+            </Typography>
           </Box>
         </Box>
-        
         <List>
           {userExportsLoading ? (
             <ListItem sx={{ justifyContent: 'center' }}><CircularProgress size={22} sx={{ color: '#1e6641' }} /></ListItem>
           ) : userExportsError ? (
             <ListItem><Alert severity="error">{userExportsError}</Alert></ListItem>
           ) : userExports.length === 0 ? (
-            <Box sx={{ 
-              display: 'flex', 
-              flexDirection: 'column', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              py: 6,
-              px: 3
-            }}>
-              <Box sx={{
-                width: 64,
-                height: 64,
-                bgcolor: '#f1f5f9',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                mb: 2
-              }}>
-                <FolderOpenIcon sx={{ color: '#94a3b8', fontSize: 28 }} />
-              </Box>
-              <Typography sx={{ 
-                color: '#64748b', 
-                fontSize: 16, 
-                fontWeight: 600,
-                textAlign: 'center',
-                mb: 1
-              }}>
+            <ListItem sx={{ justifyContent: 'center', alignItems: 'center', minHeight: 80, width: '100%' }}>
+              <Typography sx={{ color: '#b0b7be', fontSize: 17, textAlign: 'center', width: '100%' }}>
                 لا توجد ملفات محفوظة بعد
               </Typography>
-              <Typography sx={{ 
-                color: '#94a3b8', 
-                fontSize: 14, 
-                textAlign: 'center',
-                maxWidth: 200
-              }}>
-                قم بتصدير البيانات من الجدول الرئيسي لحفظها هنا
-              </Typography>
-            </Box>
+            </ListItem>
           ) : (
             userExports.map((file, idx) => (
               <ListItem
                 key={idx}
                 tabIndex={0}
                 sx={{
-                  mx: 2,
-                  mb: 2,
-                  bgcolor: 'white',
-                  borderRadius: 3,
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                  pl: 3, pr: 3, py: 2.2,
+                  mb: 1.5,
+                  bgcolor: '#fff',
+                  borderRadius: 2.5,
+                  boxShadow: '0 1px 6px 0 rgba(30,102,65,0.06)',
                   display: 'flex',
                   alignItems: 'center',
-                  minHeight: 72,
-                  border: '1px solid #f1f5f9',
-                  transition: 'all 0.2s ease',
-                  cursor: 'pointer',
+                  '&:hover .export-delete-btn': { opacity: 1 },
+                  minHeight: 56,
+                  border: 'none',
+                  transition: 'box-shadow 0.2s, transform 0.2s',
                   '&:hover': {
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-                    transform: 'translateY(-1px)',
-                    borderColor: '#1e6641',
+                    boxShadow: '0 4px 16px 0 rgba(30,102,65,0.10)',
+                    transform: 'translateY(-2px) scale(1.01)',
                   },
+                  outline: 'none',
                   '&:focus': {
-                    boxShadow: '0 0 0 3px rgba(30,102,65,0.1)',
+                    boxShadow: '0 0 0 2px #1e664144',
                   },
                 }}
               >
-                {/* Modern Selection Checkbox */}
-                <Box sx={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center',
-                  width: 48,
-                  height: 48,
-                  mr: 2
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedExports.has(file.filename)}
-                    onChange={(e) => handleExportSelection(file.filename, e.target.checked)}
-                    style={{ 
-                      width: 20, 
-                      height: 20, 
-                      accentColor: '#1e6641',
-                      cursor: 'pointer'
-                    }}
-                  />
-                </Box>
-                
-                {/* File Icon and Info */}
-                <Box sx={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: 2,
-                  flexGrow: 1 
-                }}>
-                  <Box sx={{
-                    width: 44,
-                    height: 44,
-                    bgcolor: '#f8fafc',
-                    borderRadius: 2,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    border: '1px solid #e2e8f0'
-                  }}>
-                    <Box sx={{ 
-                      width: 24, 
-                      height: 24, 
-                      bgcolor: '#1e6641', 
-                      borderRadius: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}>
-                      <Typography sx={{ color: 'white', fontSize: 12, fontWeight: 700 }}>
-                        XLS
-                      </Typography>
-                    </Box>
-                  </Box>
-                  
-                  <Box sx={{ flexGrow: 1 }}>
-                    <Typography sx={{ 
-                      fontWeight: 600, 
-                      color: '#1e293b', 
-                      fontSize: 15,
-                      mb: 0.5
-                    }}>
-                      {(() => {
-                        // file.export_date is 'YYYY-MM-DD HH:mm:ss'
-                        const datePart = file.export_date.split(' ')[0];
-                        const [year, month, day] = datePart.split('-');
-                        return `Dashboard ${day}/${month}/${year}`;
-                      })()}
-                    </Typography>
-                    <Typography sx={{ 
-                      color: '#64748b', 
-                      fontSize: 12,
-                      fontWeight: 500
-                    }}>
-                      تم التصدير في {file.export_date}
-                    </Typography>
-                  </Box>
-                </Box>
-                {/* Modern Action Buttons */}
-                <Box sx={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: 1,
-                  opacity: 0,
-                  transition: 'opacity 0.2s ease',
-                  '.MuiListItem-root:hover &': { opacity: 1 }
-                }}>
-                  <Tooltip title="تحميل الملف" arrow placement="top">
-                    <IconButton
-                      aria-label="تحميل"
-                      href={`http://localhost:5002${file.download_url}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      sx={{
-                        color: '#1e6641',
-                        bgcolor: '#f0fdf4',
-                        borderRadius: 2,
-                        p: 1,
-                        transition: 'all 0.2s ease',
-                        border: '1px solid #dcfce7',
-                        '&:hover': {
-                          bgcolor: '#1e6641',
-                          color: 'white',
-                          transform: 'scale(1.05)',
-                          boxShadow: '0 4px 12px rgba(30,102,65,0.3)'
-                        }
-                      }}
-                    >
-                      <DownloadIcon sx={{ fontSize: 18 }} />
-                    </IconButton>
-                  </Tooltip>
-                  
-                  <Tooltip title="حذف الملف" arrow placement="top">
-                    <IconButton
-                      aria-label="حذف"
-                      onClick={() => handleDeleteExport(file)}
-                      sx={{
-                        color: '#ef4444',
-                        bgcolor: '#fef2f2',
-                        borderRadius: 2,
-                        p: 1,
-                        transition: 'all 0.2s ease',
-                        border: '1px solid #fecaca',
-                        '&:hover': {
-                          bgcolor: '#ef4444',
-                          color: 'white',
-                          transform: 'scale(1.05)',
-                          boxShadow: '0 4px 12px rgba(239,68,68,0.3)'
-                        }
-                      }}
-                    >
-                      <DeleteOutlineIcon sx={{ fontSize: 18 }} />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
-              </ListItem>
-            ))
-          )}
-        </List>
-        {/* Enhanced Time Management System Header */}
-        <Box sx={{ px: 3, mb: 3, mt: 4 }}>
-          <Box sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
-            bgcolor: 'linear-gradient(135deg, #fef7ed 0%, #fed7aa 100%)',
-            borderRadius: 3,
-            p: 2.5,
-            border: '1px solid #fed7aa',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-            position: 'relative',
-            overflow: 'hidden',
-            '&::before': {
-              content: '""',
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: '3px',
-              background: 'linear-gradient(90deg, #f59e0b 0%, #d97706 100%)',
-            }
-          }}>
-            {/* Header Row */}
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Box sx={{
-                  width: 40,
-                  height: 40,
-                  bgcolor: '#f59e0b',
-                  borderRadius: '12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: '0 4px 12px rgba(245,158,11,0.3)'
-                }}>
-                  <AccessTimeIcon sx={{ color: 'white', fontSize: 20 }} />
-                </Box>
-                <Box>
-                  <Typography sx={{
-                    fontWeight: 800,
-                    color: '#92400e',
-                    fontSize: 18,
-                    mb: 0.5
-                  }}>
-                    إدارة الفترات الزمنية
-                  </Typography>
-                  <Typography sx={{
-                    color: '#a16207',
-                    fontSize: 13,
-                    fontWeight: 500
-                  }}>
-                    {snapshots.length + customTimePeriods.length} فترة محفوظة
+                <Box sx={{ flexGrow: 1 }}>
+                  <Typography sx={{ fontWeight: 500, color: '#1e6641', fontSize: 15 }}>
+                    {(() => {
+                      // file.export_date is 'YYYY-MM-DD HH:mm:ss'
+                      const datePart = file.export_date.split(' ')[0];
+                      const [year, month, day] = datePart.split('-');
+                      return `dashboard-${day}-${month}-${year}`;
+                    })()}
                   </Typography>
                 </Box>
-              </Box>
-              
-              {/* Add New Time Period Button */}
-              <Button
-                variant="contained"
-                size="small"
-                onClick={() => setAddTimePeriodModalOpen(true)}
-                sx={{
-                  bgcolor: '#f59e0b',
-                  color: 'white',
-                  borderRadius: 2,
-                  textTransform: 'none',
-                  px: 2,
-                  py: 1,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  boxShadow: '0 2px 8px rgba(245,158,11,0.3)',
-                  '&:hover': { 
-                    bgcolor: '#d97706',
-                    boxShadow: '0 4px 12px rgba(245,158,11,0.4)'
-                  }
-                }}
-                startIcon={<AddIcon sx={{ fontSize: 16 }} />}
-              >
-                إضافة فترة جديدة
-              </Button>
-            </Box>
-            
-            {/* Time Period Type Tabs */}
-            <Box sx={{ 
-              display: 'flex', 
-              gap: 1, 
-              pt: 1,
-              borderTop: '1px solid #fed7aa'
-            }}>
-              <Chip
-                label="جميع الفترات"
-                size="small"
-                sx={{
-                  bgcolor: 'white',
-                  color: '#92400e',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  '&:hover': { bgcolor: '#fef3c7' }
-                }}
-              />
-              <Chip
-                label="ربع سنوي"
-                size="small"
-                sx={{
-                  bgcolor: 'white',
-                  color: '#92400e',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  '&:hover': { bgcolor: '#fef3c7' }
-                }}
-              />
-              <Chip
-                label="مخصص"
-                size="small"
-                sx={{
-                  bgcolor: 'white',
-                  color: '#92400e',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  '&:hover': { bgcolor: '#fef3c7' }
-                }}
-              />
-            </Box>
-          </Box>
-        </Box>
-        <List>
-          {snapshotsLoading ? (
-            <ListItem sx={{ justifyContent: 'center' }}><CircularProgress size={22} sx={{ color: '#1e6641' }} /></ListItem>
-          ) : snapshotsError ? (
-            <ListItem><Alert severity="error">{snapshotsError}</Alert></ListItem>
-          ) : snapshots.length === 0 ? (
-            <Box sx={{ 
-              display: 'flex', 
-              flexDirection: 'column', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              py: 6,
-              px: 3
-            }}>
-              <Box sx={{
-                width: 64,
-                height: 64,
-                bgcolor: '#fef7ed',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                mb: 2
-              }}>
-                <Box sx={{ 
-                  width: 32, 
-                  height: 32, 
-                  bgcolor: '#f59e0b', 
-                  borderRadius: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}>
-                  <Typography sx={{ color: 'white', fontSize: 14, fontWeight: 700 }}>
-                    Q
-                  </Typography>
-                </Box>
-              </Box>
-              <Typography sx={{ 
-                color: '#92400e', 
-                fontSize: 16, 
-                fontWeight: 600,
-                textAlign: 'center',
-                mb: 1
-              }}>
-                لا توجد أرشيفات ربعية بعد
-              </Typography>
-              <Typography sx={{ 
-                color: '#a16207', 
-                fontSize: 14, 
-                textAlign: 'center',
-                maxWidth: 200
-              }}>
-                سيتم إنشاء أرشيفات تلقائياً في نهاية كل ربع
-              </Typography>
-            </Box>
-          ) : (
-            snapshots.map((snap, idx) => (
-              <ListItem key={idx} sx={{ 
-                mx: 2,
-                mb: 2,
-                bgcolor: 'white',
-                borderRadius: 3,
-                boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-                display: 'flex',
-                alignItems: 'center',
-                minHeight: 72,
-                border: '1px solid #fef3c7',
-                transition: 'all 0.2s ease',
-                cursor: 'pointer',
-                '&:hover': {
-                  boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-                  transform: 'translateY(-1px)',
-                  borderColor: '#f59e0b',
-                },
-              }}>
-                {/* Quarter Icon */}
-                <Box sx={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center',
-                  width: 48,
-                  height: 48,
-                  mr: 2
-                }}>
-                  <Box sx={{
-                    width: 36,
-                    height: 36,
-                    bgcolor: '#fef3c7',
-                    borderRadius: 2,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    border: '1px solid #fde68a'
-                  }}>
-                    <Typography sx={{ 
-                      color: '#d97706', 
-                      fontSize: 14, 
-                      fontWeight: 700 
-                    }}>
-                      {snap.quarter.replace('Q', 'Q')}
-                    </Typography>
-                  </Box>
-                </Box>
-                
-                {/* Quarter Info */}
-                <Box sx={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: 2,
-                  flexGrow: 1 
-                }}>
-                  <Box sx={{
-                    width: 44,
-                    height: 44,
-                    bgcolor: '#fef7ed',
-                    borderRadius: 2,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    border: '1px solid #fed7aa'
-                  }}>
-                    <Box sx={{ 
-                      width: 24, 
-                      height: 24, 
-                      bgcolor: '#f59e0b', 
-                      borderRadius: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}>
-                      <Typography sx={{ color: 'white', fontSize: 10, fontWeight: 700 }}>
-                        {snap.year}
-                      </Typography>
-                    </Box>
-                  </Box>
-                  
-                  <Box sx={{ flexGrow: 1 }}>
-                    <Typography sx={{ 
-                      fontWeight: 600, 
-                      color: '#92400e', 
-                      fontSize: 15,
-                      mb: 0.5
-                    }}>
-                      {`الربع ${snap.quarter.replace('Q', '')} - ${snap.year}`}
-                    </Typography>
-                    <Typography sx={{ 
-                      color: '#a16207', 
-                      fontSize: 12,
-                      fontWeight: 500
-                    }}>
-                      تم الحفظ في {snap.snapshot_date}
-                    </Typography>
-                  </Box>
-                </Box>
-                
-                {/* Download Button */}
-                <Tooltip title="تحميل الأرشيف" arrow placement="top">
+                <Tooltip title="تحميل" arrow>
                   <IconButton
                     aria-label="تحميل"
-                    href={`http://localhost:5002${snap.download_url}`}
+                    href={`http://localhost:5003${file.download_url}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     sx={{
-                      color: '#f59e0b',
-                      bgcolor: '#fef3c7',
-                      borderRadius: 2,
-                      p: 1,
-                      transition: 'all 0.2s ease',
-                      border: '1px solid #fde68a',
-                      '&:hover': {
-                        bgcolor: '#f59e0b',
-                        color: 'white',
-                        transform: 'scale(1.05)',
-                        boxShadow: '0 4px 12px rgba(245,158,11,0.3)'
-                      }
+                      color: '#1e6641',
+                      bgcolor: 'transparent',
+                      borderRadius: '50%',
+                      p: 0.7,
+                      mx: 0.5,
+                      transition: 'color 0.2s, background 0.2s',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 22,
+                      height: 36,
+                      width: 36,
+                      minWidth: 36,
                     }}
                   >
-                    <DownloadIcon sx={{ fontSize: 18 }} />
+                    <DownloadIcon sx={{ fontSize: 22 }} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="حذف" arrow>
+                  <IconButton
+                    aria-label="حذف"
+                    className="export-delete-btn"
+                    onClick={() => handleDeleteExport(file)}
+                    sx={{
+                      ml: 0.5,
+                      opacity: 0,
+                      color: '#7b7b7b',
+                      bgcolor: 'transparent',
+                      borderRadius: '50%',
+                      p: 0.7,
+                      transition: 'opacity 0.2s, color 0.2s, background 0.2s',
+                      boxShadow: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 22,
+                      height: 36,
+                      width: 36,
+                      minWidth: 36,
+                      '&:hover': { color: '#444', bgcolor: 'rgba(120,120,120,0.07)' },
+                    }}
+                    size="small"
+                  >
+                    <DeleteOutlineIcon sx={{ fontSize: 22 }} />
                   </IconButton>
                 </Tooltip>
               </ListItem>
             ))
           )}
         </List>
-        
-        {/* Custom Time Periods List */}
-        {customTimePeriods.length > 0 && (
-          <>
-            <Box sx={{ px: 3, mb: 2, mt: 3 }}>
-              <Typography sx={{
-                fontWeight: 600,
-                color: '#92400e',
-                fontSize: 16,
-                mb: 2
-              }}>
-                الفترات المخصصة ({customTimePeriods.length})
-              </Typography>
-            </Box>
-            
-            <List>
-              {customTimePeriods.map((period) => (
-                <ListItem key={period.id} sx={{ 
-                  mx: 2,
-                  mb: 2,
-                  bgcolor: 'white',
-                  borderRadius: 3,
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  minHeight: 72,
-                  border: `1px solid ${period.color}20`,
-                  transition: 'all 0.2s ease',
-                  cursor: 'pointer',
-                  '&:hover': {
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-                    transform: 'translateY(-1px)',
-                    borderColor: period.color,
-                  },
-                }}>
-                  {/* Period Icon */}
-                  <Box sx={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center',
-                    width: 48,
-                    height: 48,
-                    mr: 2
-                  }}>
-                    <Box sx={{
-                      width: 36,
-                      height: 36,
-                      bgcolor: `${period.color}20`,
-                      borderRadius: 2,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      border: `1px solid ${period.color}40`
-                    }}>
-                      <CalendarTodayIcon sx={{ 
-                        color: period.color, 
-                        fontSize: 18 
-                      }} />
-                    </Box>
-                  </Box>
-                  
-                  {/* Period Info */}
-                  <Box sx={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: 2,
-                    flexGrow: 1 
-                  }}>
-                    <Box sx={{
-                      width: 44,
-                      height: 44,
-                      bgcolor: `${period.color}10`,
-                      borderRadius: 2,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      border: `1px solid ${period.color}30`
-                    }}>
-                      <Chip
-                        label={period.type === 'quarterly' ? 'ربع' : period.type === 'monthly' ? 'شهر' : period.type === 'weekly' ? 'أسبوع' : 'مخصص'}
-                        size="small"
-                        sx={{
-                          bgcolor: period.color,
-                          color: 'white',
-                          fontSize: 10,
-                          fontWeight: 700,
-                          height: 20
-                        }}
-                      />
-                    </Box>
-                    
-                    <Box sx={{ flexGrow: 1 }}>
-                      <Typography sx={{ 
-                        fontWeight: 600, 
-                        color: '#1e293b', 
-                        fontSize: 15,
-                        mb: 0.5
-                      }}>
-                        {period.name}
-                      </Typography>
-                      <Typography sx={{ 
-                        color: '#64748b', 
-                        fontSize: 12,
-                        fontWeight: 500
-                      }}>
-                        {period.startDate} - {period.endDate}
-                        {period.description && ` • ${period.description}`}
-                      </Typography>
-                    </Box>
-                  </Box>
-                  
-                  {/* Action Buttons */}
-                  <Box sx={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: 1,
-                    opacity: 0,
-                    transition: 'opacity 0.2s ease',
-                    '.MuiListItem-root:hover &': { opacity: 1 }
-                  }}>
-                    <Tooltip title="تصدير البيانات" arrow placement="top">
-                      <IconButton
-                        aria-label="تصدير"
-                        onClick={() => handleExportForTimePeriod(period)}
-                        sx={{
-                          color: period.color,
-                          bgcolor: `${period.color}10`,
-                          borderRadius: 2,
-                          p: 1,
-                          transition: 'all 0.2s ease',
-                          border: `1px solid ${period.color}30`,
-                          '&:hover': {
-                            bgcolor: period.color,
-                            color: 'white',
-                            transform: 'scale(1.05)',
-                            boxShadow: `0 4px 12px ${period.color}40`
-                          }
-                        }}
-                      >
-                        <FileDownloadIcon sx={{ fontSize: 18 }} />
-                      </IconButton>
-                    </Tooltip>
-                    
-                    <Tooltip title="تعديل الفترة" arrow placement="top">
-                      <IconButton
-                        aria-label="تعديل"
-                        onClick={() => {
-                          setSelectedTimePeriod(period);
-                          setEditTimePeriodModalOpen(true);
-                        }}
-                        sx={{
-                          color: '#64748b',
-                          bgcolor: '#f1f5f9',
-                          borderRadius: 2,
-                          p: 1,
-                          transition: 'all 0.2s ease',
-                          border: '1px solid #e2e8f0',
-                          '&:hover': {
-                            bgcolor: '#64748b',
-                            color: 'white',
-                            transform: 'scale(1.05)',
-                            boxShadow: '0 4px 12px rgba(100,116,139,0.3)'
-                          }
-                        }}
-                      >
-                        <EditIcon sx={{ fontSize: 18 }} />
-                      </IconButton>
-                    </Tooltip>
-                    
-                    <Tooltip title="حذف الفترة" arrow placement="top">
-                      <IconButton
-                        aria-label="حذف"
-                        onClick={() => handleDeleteTimePeriod(period.id)}
-                        sx={{
-                          color: '#ef4444',
-                          bgcolor: '#fef2f2',
-                          borderRadius: 2,
-                          p: 1,
-                          transition: 'all 0.2s ease',
-                          border: '1px solid #fecaca',
-                          '&:hover': {
-                            bgcolor: '#ef4444',
-                            color: 'white',
-                            transform: 'scale(1.05)',
-                            boxShadow: '0 4px 12px rgba(239,68,68,0.3)'
-                          }
-                        }}
-                      >
-                        <DeleteOutlineIcon sx={{ fontSize: 18 }} />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                </ListItem>
-              ))}
-            </List>
-          </>
-        )}
-        
-        {/* Empty State for Custom Time Periods */}
-        {customTimePeriods.length === 0 && (
-          <Box sx={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            py: 4,
-            px: 3
+        {/* Divider between sections */}
+        <Box sx={{ mt: 2, pb: 0, px: 0 }}>
+          <Box sx={{
+            display: 'flex',
+            alignItems: 'center',
+            bgcolor: '#e9f5ee',
+            borderRadius: 4,
+            px: 2,
+            py: 1.2,
+            width: '100%',
+            boxSizing: 'border-box',
+            mb: 1.5,
+            gap: 1.5,
           }}>
-            <Box sx={{
-              width: 48,
-              height: 48,
-              bgcolor: '#fef7ed',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              mb: 2
-            }}>
-              <AccessTimeIcon sx={{ color: '#f59e0b', fontSize: 24 }} />
-            </Box>
-            <Typography sx={{ 
-              color: '#92400e', 
-              fontSize: 14, 
-              fontWeight: 600,
-              textAlign: 'center',
-              mb: 1
-            }}>
-              لا توجد فترات مخصصة بعد
-            </Typography>
-            <Typography sx={{ 
-              color: '#a16207', 
-              fontSize: 12, 
-              textAlign: 'center',
-              maxWidth: 200
-            }}>
-              انقر على "إضافة فترة جديدة" لإنشاء فترات زمنية مخصصة
+            <Box sx={{ width: 3, height: 24, bgcolor: '#1e6641', borderRadius: 6, mr: 0 }} />
+            <Typography
+              variant="subtitle1"
+              sx={{
+                fontWeight: 700,
+                color: '#1e6641',
+                fontSize: 18,
+                letterSpacing: 0.1,
+                minWidth: 0,
+                pr: 1,
+              }}
+            >
+              أرشيف الفترات الربعية
             </Typography>
           </Box>
-        )}
+        </Box>
+        
+        {/* Custom Export Section - Right next to Quarterly Archives */}
+        <Box sx={{ px: 2, mb: 2 }}>
+          <Box sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            bgcolor: '#f8f9fa',
+            borderRadius: 3,
+            px: 2,
+            py: 1.5,
+            border: '1px solid #e9ecef',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease-in-out',
+            '&:hover': {
+              bgcolor: '#e9ecef',
+              borderColor: '#1e6641',
+              transform: 'translateY(-1px)',
+              boxShadow: '0 4px 12px rgba(30, 102, 65, 0.15)',
+            },
+            '&:active': {
+              transform: 'translateY(0px)',
+            }
+          }}
+          onClick={() => setCustomExportExpanded(!customExportExpanded)}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <Box sx={{ 
+                width: 20, 
+                height: 20, 
+                bgcolor: '#1e6641', 
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'white',
+                fontSize: 12,
+                fontWeight: 'bold',
+                transition: 'all 0.3s ease-in-out',
+                animation: customExportExpanded ? 'pulse 2s infinite' : 'none',
+                '@keyframes pulse': {
+                  '0%': { transform: 'scale(1)' },
+                  '50%': { transform: 'scale(1.1)' },
+                  '100%': { transform: 'scale(1)' },
+                }
+              }}>
+                ⚙️
+              </Box>
+              <Typography
+                variant="subtitle2"
+                sx={{
+                  fontWeight: 600,
+                  color: '#495057',
+                  fontSize: 14,
+                  transition: 'color 0.3s ease-in-out',
+                }}
+              >
+                تصدير مخصص
+              </Typography>
+            </Box>
+            <IconButton
+              size="small"
+              sx={{
+                color: '#1e6641',
+                p: 0.5,
+                transition: 'all 0.3s ease-in-out',
+                transform: customExportExpanded ? 'rotate(45deg)' : 'rotate(0deg)',
+                '&:hover': { 
+                  color: '#14532d',
+                  bgcolor: 'rgba(30, 102, 65, 0.1)',
+                  transform: customExportExpanded ? 'rotate(45deg) scale(1.1)' : 'scale(1.1)',
+                },
+              }}
+            >
+              <Add />
+            </IconButton>
+          </Box>
+        </Box>
+        
+        {/* Collapsible Custom Export Controls */}
+        <Collapse in={customExportExpanded}>
+          <Box sx={{ 
+            px: 2, 
+            mb: 2,
+            bgcolor: '#fafbfc',
+            borderRadius: 3,
+            border: '1px solid #e9ecef',
+            py: 2
+          }}>
+            <Typography variant="body2" sx={{ color: '#495057', mb: 1.5, fontSize: 13, fontWeight: 600 }}>
+              📅 تصدير لتاريخ مخصص
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <TextField
+                type="date"
+                size="small"
+                value={customExportDate}
+                onChange={(e) => setCustomExportDate(e.target.value)}
+                sx={{
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: 2,
+                    fontSize: 13,
+                    "& fieldset": { borderColor: "#e0e0e0" },
+                    "&:hover fieldset": { borderColor: "#1e6641" },
+                    "&:focus fieldset": { borderColor: "#1e6641" },
+                  },
+                  "& .MuiInputLabel-root": { color: "#666", fontSize: 12 },
+                }}
+              />
+              
+              {/* Show quarter mapping for custom date */}
+              {customExportDate && (
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: 1, 
+                  px: 1.5, 
+                  py: 0.8, 
+                  bgcolor: '#e8f5e8', 
+                  borderRadius: 2,
+                  border: '1px solid #c3e6c3',
+                  animation: 'fadeIn 0.3s ease-in-out'
+                }}>
+                  <Typography variant="caption" sx={{ color: '#1e6641', fontWeight: 600, fontSize: 11 }}>
+                    🎯 الربع: {getQuarterFromDate(customExportDate)}
+                  </Typography>
+                </Box>
+              )}
+              
+              <Button
+                variant="contained"
+                onClick={handleCustomDateExport}
+                disabled={!customExportDate}
+                size="small"
+                sx={{
+                  borderRadius: 2,
+                  bgcolor: customExportDate ? '#1e6641' : '#ccc',
+                  color: 'white',
+                  fontWeight: 600,
+                  fontSize: 12,
+                  textTransform: 'none',
+                  py: 1,
+                  transition: 'all 0.2s ease-in-out',
+                  '&:hover': {
+                    bgcolor: customExportDate ? '#14532d' : '#ccc',
+                    transform: customExportDate ? 'translateY(-1px)' : 'none',
+                    boxShadow: customExportDate ? '0 4px 8px rgba(30, 102, 65, 0.3)' : 'none',
+                  },
+                  '&:disabled': {
+                    bgcolor: '#ccc',
+                    cursor: 'not-allowed',
+                  }
+                }}
+                startIcon={customExportDate ? <FileDownloadIcon /> : null}
+              >
+                {customExportDate ? '📥 تصدير للتاريخ المحدد' : 'اختر تاريخ أولاً'}
+              </Button>
+            </Box>
+          </Box>
+          
+          {/* File Naming Customization */}
+          <Box sx={{ 
+            px: 2, 
+            mb: 2,
+            bgcolor: '#fafbfc',
+            borderRadius: 3,
+            border: '1px solid #e9ecef',
+            py: 2
+          }}>
+            <Typography variant="body2" sx={{ color: '#495057', mb: 1.5, fontSize: 13, fontWeight: 600 }}>
+              📝 تخصيص اسم الملف
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <TextField
+                size="small"
+                placeholder="اسم مخصص للملف (اختياري)"
+                value={customFileName}
+                onChange={(e) => setCustomFileName(e.target.value)}
+                sx={{
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: 2,
+                    fontSize: 13,
+                    "& fieldset": { borderColor: "#e0e0e0" },
+                    "&:hover fieldset": { borderColor: "#1e6641" },
+                    "&:focus fieldset": { borderColor: "#1e6641" },
+                  },
+                  "& .MuiInputLabel-root": { color: "#666", fontSize: 12 },
+                }}
+              />
+              <Typography variant="caption" sx={{ color: '#888', fontSize: 10, fontStyle: 'italic' }}>
+                💡 سيتم إضافة التاريخ والوقت تلقائياً
+              </Typography>
+            </Box>
+          </Box>
+        </Collapse>
+        
+        {/* Quarterly Archives List */}
+        <List>
+          {snapshotsLoading ? (
+            <ListItem sx={{ justifyContent: 'center' }}><CircularProgress size={22} sx={{ color: '#1e6641' }} /></ListItem>
+          ) : snapshotsError ? (
+            <ListItem><Alert severity="error">{snapshotsError}</Alert></ListItem>
+          ) : snapshots.length === 0 ? (
+            <ListItem sx={{ justifyContent: 'center', color: '#888' }}>لا توجد ملفات محفوظة بعد</ListItem>
+          ) : (
+            snapshots.map((snap, idx) => (
+              <ListItem key={idx} sx={{ pl: 2, pr: 2, py: 1, borderBottom: '1px solid #e0e0e0', display: 'flex', alignItems: 'center' }}>
+                <span style={{ fontSize: 22, marginLeft: 8 }}>📄</span>
+                <Typography sx={{ fontWeight: 500, color: '#1e6641', flexGrow: 1, fontSize: 16 }}>
+                  {`${snap.year} ${snap.quarter.replace('Q', 'Q')} — ${snap.snapshot_date}`}
+                </Typography>
+                <Tooltip title={`تاريخ الاستخراج: ${snap.snapshot_date}`} arrow>
+                  <Button
+                    variant="contained"
+                    color="success"
+                    size="small"
+                    href={`http://localhost:5003${snap.download_url}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    sx={{ minWidth: 0, px: 2, py: 1, borderRadius: 2, fontWeight: 600 }}
+                    startIcon={<DownloadIcon />}
+                  >
+                    تحميل
+                  </Button>
+                </Tooltip>
+              </ListItem>
+            ))
+          )}
+        </List>
       </Drawer>
     </Box>
   );
