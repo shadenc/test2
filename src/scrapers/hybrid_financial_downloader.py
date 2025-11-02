@@ -36,8 +36,14 @@ def get_company_symbols_from_json():
         
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
         symbols = [item['symbol'] for item in data if item.get('symbol')]
+        # Optional limit for testing
+        try:
+            limit = int(os.environ.get("LIMIT_COMPANIES", "0"))
+            if limit > 0:
+                symbols = symbols[:limit]
+        except Exception:
+            pass
         print(f"📋 Found {len(symbols)} company symbols from JSON file")
         return symbols
         
@@ -280,6 +286,12 @@ async def get_all_financial_reports(page: Page, symbol: str):
 async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year: int, statement_type: str) -> bool:
     """Download PDF using the working stealth approach, generalized for statement type."""
     try:
+        # Respect stop flag before starting any new download
+        stop_flag_env = os.environ.get("STOP_FLAG_FILE", "data/runtime/stop_pdfs_pipeline.flag")
+        stop_flag_path = Path(stop_flag_env)
+        if stop_flag_path.exists():
+            print("🛑 Stop requested. Skipping new PDF download request.")
+            return False
         filename = f"{symbol}_{statement_type}_{year}.pdf"
         pdf_path = PDF_DIR / filename
         if pdf_path.exists():
@@ -289,6 +301,10 @@ async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year:
         if not pdf_url.startswith("http"):
             pdf_url = f"https://www.saudiexchange.sa{pdf_url}"
         response = await page.goto(pdf_url, wait_until='networkidle')
+        # Check again immediately after navigation in case stop was hit during navigation
+        if stop_flag_path.exists():
+            print("🛑 Stop requested after navigation. Aborting download save.")
+            return False
         content_type = response.headers.get('content-type', '')
         if 'pdf' in content_type.lower():
             print(f"✅ Successfully accessed PDF for {symbol}")
@@ -322,6 +338,11 @@ async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year:
 async def process_company_with_retry(browser: Browser, symbol: str, max_retries: int = 3) -> bool:
     for attempt in range(max_retries):
         try:
+            # Abort early if stop requested
+            stop_flag_env = os.environ.get("STOP_FLAG_FILE", "data/runtime/stop_pdfs_pipeline.flag")
+            if Path(stop_flag_env).exists():
+                print("🛑 Stop requested. Aborting company processing.")
+                return False
             page = await browser.new_page()
             await page.mouse.move(random.randint(100, 500), random.randint(100, 300))
             await asyncio.sleep(random.uniform(0.5, 1.5))
@@ -335,6 +356,11 @@ async def process_company_with_retry(browser: Browser, symbol: str, max_retries:
                 return False
             all_success = True
             for stype, year, pdf_url in reports:
+                # Check stop flag before starting each report download
+                if Path(stop_flag_env).exists():
+                    print("🛑 Stop requested. Halting further report downloads for this company.")
+                    all_success = False
+                    break
                 success = await download_pdf_with_stealth(page, pdf_url, symbol, year, stype)
                 if not success:
                     all_success = False
@@ -366,10 +392,20 @@ async def download_all_financial_statements():
     playwright, browser, context = await setup_stealth_browser()
     
     try:
+        # progress reporting
+        progress_path = Path(os.environ.get("PROGRESS_FILE", "data/runtime/pdfs_progress.json"))
+        processed = 0
         success_count = 0
         failed_count = 0
         
+        # Stop flag support
+        stop_flag = Path(os.environ.get("STOP_FLAG_FILE", "data/runtime/stop_pdfs_pipeline.flag"))
+        stop_flag.parent.mkdir(parents=True, exist_ok=True)
+
         for i, symbol in enumerate(companies, 1):
+            if stop_flag.exists():
+                print("🛑 Stop requested. Ending PDF pipeline early.")
+                break
             print(f"\n{'='*50}")
             print(f"📊 Processing {symbol} ({i}/{len(companies)})")
             print(f"{'='*50}")
@@ -382,9 +418,27 @@ async def download_all_financial_statements():
             else:
                 failed_count += 1
                 print(f"❌ Failed to process {symbol}")
+            processed += 1
+            # write progress
+            try:
+                progress_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(progress_path, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        "status": "running",
+                        "processed": processed,
+                        "success": success_count,
+                        "failed": failed_count,
+                        "current_symbol": symbol
+                    }, f, ensure_ascii=False)
+            except Exception:
+                pass
             
             # Add delay between companies
             if i < len(companies):
+                # If stop requested, skip waiting and break immediately
+                if stop_flag.exists():
+                    print("🛑 Stop requested. Skipping wait and ending now.")
+                    break
                 delay = random.uniform(3, 7)
                 print(f"⏳ Waiting {delay:.1f} seconds before next company...")
                 await asyncio.sleep(delay)
@@ -395,8 +449,20 @@ async def download_all_financial_statements():
         print(f"{'='*50}")
         print(f"✅ Successful: {success_count}")
         print(f"❌ Failed: {failed_count}")
-        print(f"📈 Success Rate: {(success_count/(success_count+failed_count)*100):.1f}%")
-        
+        total = success_count + failed_count
+        rate = (success_count/total*100) if total > 0 else 0.0
+        print(f"📈 Success Rate: {rate:.1f}%")
+        # mark done
+        try:
+            with open(progress_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "status": "completed",
+                    "processed": processed,
+                    "success": success_count,
+                    "failed": failed_count
+                }, f, ensure_ascii=False)
+        except Exception:
+            pass
     finally:
         await browser.close()
         await playwright.stop()

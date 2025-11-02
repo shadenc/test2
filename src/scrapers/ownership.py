@@ -174,7 +174,11 @@ class TadawulOwnershipScraper:
         # Save JSON to frontend/public/ for React app
         frontend_json_path = Path("frontend/public/foreign_ownership_data.json")
         frontend_json_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
+        # Save JSON also to backend data directory
+        backend_json_path = output_path / "foreign_ownership_data.json"
+        output_path.mkdir(parents=True, exist_ok=True)
+
         # Save CSV to original output directory
         csv_path = output_path / "foreign_ownership_data.csv"
         
@@ -274,7 +278,12 @@ class TadawulOwnershipScraper:
                 logger.info(f"Saving data to {frontend_json_path}")
                 with open(frontend_json_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
-                
+
+                # Save as JSON to backend data directory for calculators/APIs
+                logger.info(f"Saving data to {backend_json_path}")
+                with open(backend_json_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+
                 # Save as CSV
                 logger.info(f"Saving data to {csv_path}")
                 with open(csv_path, "w", newline='', encoding="utf-8") as f:
@@ -282,7 +291,7 @@ class TadawulOwnershipScraper:
                     writer.writeheader()
                     writer.writerows(data)
                 
-                logger.info("Data successfully saved to frontend/public/foreign_ownership_data.json and CSV file")
+                logger.info("Data successfully saved to frontend/public/foreign_ownership_data.json, data/ownership/foreign_ownership_data.json, and CSV file")
                 
             except TimeoutError:
                 logger.error("Timeout while waiting for the table to load")

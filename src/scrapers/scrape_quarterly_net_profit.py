@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 Quarterly Net Profit Scraper for Saudi Exchange
@@ -28,8 +29,15 @@ def get_company_symbols_from_json():
         
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
         symbols = [item['symbol'] for item in data if item.get('symbol')]
+        # Optional limit for testing
+        try:
+            import os
+            limit = int(os.environ.get("LIMIT_COMPANIES", "0"))
+            if limit > 0:
+                symbols = symbols[:limit]
+        except Exception:
+            pass
         print(f"📋 Found {len(symbols)} company symbols from JSON file")
         return symbols
         
@@ -496,11 +504,39 @@ async def scrape_all_companies_net_profit():
     playwright, browser, context = await setup_stealth_browser()
     
     try:
-        results = []
+        # Load existing data to merge into (map by company_symbol)
+        existing_map = {}
+        if OUTPUT_FILE.exists():
+            try:
+                with open(OUTPUT_FILE, 'r', encoding='utf-8') as f:
+                    existing_list = json.load(f)
+                    for item in existing_list:
+                        sym = str(item.get('company_symbol', '')).strip()
+                        if sym:
+                            existing_map[sym] = item
+                print(f"🔄 Loaded existing net profit data for {len(existing_map)} companies to merge")
+            except Exception as e:
+                print(f"⚠️ Failed to load existing net profit file, starting fresh merge: {e}")
+                existing_map = {}
+        
         success_count = 0
         failed_count = 0
+        # progress reporting
+        import os
+        from pathlib import Path
+        progress_path = Path(os.environ.get("PROGRESS_FILE", "data/runtime/net_profit_progress.json"))
+        processed = 0
         
+        # Stop flag support
+        from pathlib import Path
+        import os
+        stop_flag = Path(os.environ.get("STOP_FLAG_FILE", "data/runtime/stop_net_profit.flag"))
+        stop_flag.parent.mkdir(parents=True, exist_ok=True)
+
         for i, symbol in enumerate(companies, 1):
+            if stop_flag.exists():
+                print("🛑 Stop requested. Ending net profit scraping early.")
+                break
             print(f"\n{'='*60}")
             print(f"📊 Processing {symbol} ({i}/{len(companies)})")
             print(f"{'='*60}")
@@ -508,16 +544,43 @@ async def scrape_all_companies_net_profit():
             result = await process_company_with_retry(browser, symbol)
             
             if result:
-                results.append(result)
                 success_count += 1
                 print(f"✅ Successfully processed {symbol}")
+                # Merge into existing map
+                existing_map[str(symbol)] = result
+                # Write incrementally so partial runs persist
+                try:
+                    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+                        json.dump(list(existing_map.values()), f, indent=2, ensure_ascii=False)
+                    print(f"💾 Incrementally updated: {OUTPUT_FILE}")
+                except Exception as e:
+                    print(f"⚠️ Failed to write incremental update: {e}")
             else:
                 failed_count += 1
                 print(f"❌ Failed to process {symbol}")
+            processed += 1
+            # write progress
+            try:
+                progress_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(progress_path, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        "status": "running",
+                        "processed": processed,
+                        "success": success_count,
+                        "failed": failed_count,
+                        "current_symbol": symbol
+                    }, f, ensure_ascii=False)
+            except Exception:
+                pass
             
-            # Stop after 10 companies
-            if i >= 10:
-                print(f"\n🛑 Stopping after 10 companies as requested")
+            # Optional limit for safety (also enforced by LIMIT_COMPANIES)
+            try:
+                limit = int(os.environ.get("LIMIT_COMPANIES", "0"))
+            except Exception:
+                limit = 0
+            if limit and i >= limit:
+                print(f"\n🛑 Stopping after {limit} companies as requested")
                 break
             
             # Add delay between companies
@@ -526,20 +589,25 @@ async def scrape_all_companies_net_profit():
                 print(f"⏳ Waiting {delay:.1f} seconds before next company...")
                 await asyncio.sleep(delay)
         
-        # Save results
-        if results:
-            with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-                json.dump(results, f, indent=2, ensure_ascii=False)
-            print(f"\n💾 Results saved to: {OUTPUT_FILE}")
-        
         # Summary
         print(f"\n{'='*60}")
         print(f"📊 SCRAPING SUMMARY")
         print(f"{'='*60}")
         print(f"✅ Successful: {success_count}")
         print(f"❌ Failed: {failed_count}")
-        print(f"📈 Success Rate: {(success_count/(success_count+failed_count)*100):.1f}%")
+        print(f"📈 Success Rate: {(success_count/(success_count+failed_count)*100) if (success_count+failed_count)>0 else 0:.1f}%")
         print(f"💾 Data saved to: {OUTPUT_FILE}")
+        # mark done
+        try:
+            with open(progress_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "status": "completed",
+                    "processed": processed,
+                    "success": success_count,
+                    "failed": failed_count
+                }, f, ensure_ascii=False)
+        except Exception:
+            pass
         
     finally:
         await browser.close()

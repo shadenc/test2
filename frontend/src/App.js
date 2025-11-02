@@ -7,6 +7,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import Typography from "@mui/material/Typography";
 import Papa from "papaparse";
 import Modal from "@mui/material/Modal";
+import Fade from "@mui/material/Fade";
 import IconButton from "@mui/material/IconButton";
 import CloseIcon from "@mui/icons-material/Close";
 import VisibilityIcon from "@mui/icons-material/Visibility";
@@ -37,6 +38,10 @@ import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import MenuItem from '@mui/material/MenuItem';
 import EditIcon from '@mui/icons-material/Edit';
 import Add from '@mui/icons-material/Add';
+import LinearProgress from '@mui/material/LinearProgress';
+
+// API URL configuration - supports both localhost and production
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5003';
 
 // Evidence Modal Component
 const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpdate }) => {
@@ -93,7 +98,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
         )}
 
         {evidenceData && !loading && (
-          <Box>
+          <>
             {/* Screenshot */}
             {evidenceData.evidence && evidenceData.evidence.has_evidence && (
               <Box sx={{ mb: 4 }}>
@@ -107,7 +112,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                   maxHeight: '50vh'
                 }}>
                   <img 
-                    src={`http://localhost:5003/api/evidence/${evidenceData.company_symbol}.png?quarter=${evidenceData.evidence?.requested_quarter || 'Q1_2025'}&t=${Date.now()}`}
+                    src={`${API_URL}/api/evidence/${evidenceData.company_symbol}.png?quarter=${evidenceData.evidence?.requested_quarter || 'Q1_2025'}&t=${Date.now()}`}
                     alt="Evidence Screenshot"
                     style={{ 
                       maxWidth: '100%', 
@@ -116,97 +121,58 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                     }}
                     onLoad={() => {
                       console.log('Evidence image loaded with quarter:', evidenceData.evidence?.requested_quarter);
-                      console.log('Full image URL:', `http://localhost:5003/api/evidence/${evidenceData.company_symbol}.png?quarter=${evidenceData.evidence?.requested_quarter || 'Q1_2025'}&t=${Date.now()}`);
+                      console.log('Full image URL:', `${API_URL}/api/evidence/${evidenceData.company_symbol}.png?quarter=${evidenceData.evidence?.requested_quarter || 'Q1_2025'}&t=${Date.now()}`);
                     }}
                   />
                 </Box>
               </Box>
             )}
 
-            {/* Extraction Details */}
+            {/* Extracted numeric value */}
             {evidenceData.numeric_value && (
-              <Box sx={{ mb: 4 }}>
-                <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 3, color: '#1e6641' }}>
-                  تفاصيل الاستخراج
-                </Typography>
-                <Box sx={{ 
-                  p: 4, 
-                  bgcolor: '#ffffff', 
-                  borderRadius: 3,
-                  border: '2px solid #e8f5ee',
-                  boxShadow: '0 4px 20px rgba(30, 102, 65, 0.1)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 3
-                }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                    <Typography sx={{ fontWeight: 'bold', fontSize: '1.2rem', color: '#333' }}>
+              <Box sx={{ mt: 3 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#1e6641', display: 'flex', alignItems: 'center', gap: 1 }}>
                       القيمة المستخرجة:
+                  {evidenceData.applied_multiplier && Number(evidenceData.applied_multiplier) > 1 && (
+                    <span style={{ color: '#888', fontWeight: 400 }}>(تم تطبيق تحويل الوحدة)</span>
+                  )}
                     </Typography>
-                    <Tooltip title="هل تحتاج لتغيير هذه القيمة؟ انقر هنا للتعديل" arrow placement="top">
-                      <InlineEditableCell
-                        value={evidenceData.numeric_value}
-                        onSave={async (newValue) => {
-                          try {
-                            // Determine the field type based on the evidence data
-                            let fieldType = 'current_quarter'; // default to current_quarter
-                            if (evidenceData.evidence?.requested_quarter) {
-                              const quarter = evidenceData.evidence.requested_quarter;
-                              if (quarter.includes('Annual_2024') || quarter.includes('Q4_2024')) {
-                                fieldType = 'previous_quarter';
-                              } else if (quarter.includes('Q1_2025') || quarter.includes('Q2_2025') || quarter.includes('Q3_2025') || quarter.includes('Q4_2025')) {
-                                fieldType = 'current_quarter';
-                              }
-                            }
-                            
-                            console.log('Determined field type:', fieldType, 'for quarter:', evidenceData.evidence?.requested_quarter);
-                            
-                            const requestBody = {
-                              company_symbol: parseInt(evidenceData.company_symbol || evidenceData.symbol),
-                              field_type: fieldType,
-                              new_value: parseFloat(newValue),
-                              quarter: evidenceData.evidence?.requested_quarter?.replace('Annual_2024', 'Q4').replace('Q1_2025', 'Q1').replace('Q2_2025', 'Q2').replace('Q3_2025', 'Q3').replace('Q4_2025', 'Q4') || 'Q1',
-                              feedback: 'Corrected via evidence modal'
-                            };
-                            
-                            console.log('Sending correction request:', requestBody);
-                            
-                            const response = await fetch('http://localhost:5003/api/correct_field_value', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify(requestBody),
-                            });
-                            
-                            const data = await response.json();
-                            console.log('Correction response:', data);
-                            
-                            if (data.status === 'success') {
-                              // Update the evidence data to show the new value
-                              evidenceData.numeric_value = newValue;
-                              // Show success message
-                              setUpdateSuccess(true);
-                              // Call the callback to refresh the main data
-                              if (onDataUpdate) {
-                                onDataUpdate();
-                              }
-                              // Hide success message after 3 seconds
-                              setTimeout(() => setUpdateSuccess(false), 3000);
-                            } else {
-                              const errorMessage = data.message || data.error || 'Unknown error occurred';
-                              console.error('Correction failed:', errorMessage);
-                              alert('فشل في حفظ التصحيح: ' + errorMessage);
-                            }
-                          } catch (error) {
-                            alert('حدث خطأ أثناء حفظ التصحيح: ' + error.message);
-                          }
-                        }}
-                        fieldType="retained_earnings"
-                        companySymbol={evidenceData.company_symbol || evidenceData.symbol}
-                        companyName={evidenceData.company_name}
-                        initialValue={evidenceData.numeric_value}
-                      />
-                    </Tooltip>
+                <Typography variant="h6" sx={{ mt: 0.5 }}>
+                  {Number(evidenceData.numeric_value).toLocaleString('en-US')} SAR
+                </Typography>
+
+                {/* Scaling explanation */}
+                <Box sx={{ mt: 1.5, p: 1.5, bgcolor: '#f7f9f8', border: '1px solid #e0e6e4', borderRadius: 1.5 }}>
+                  {(() => {
+                    const rawStr = String(evidenceData.value || '').replace(/[^0-9,.-]/g, '');
+                    const raw = Number(rawStr.replace(/,/g, ''));
+                    const mult = Number(evidenceData.applied_multiplier || 1);
+                    const unit = String(evidenceData.unit_detected || 'SAR');
+                    const unitLabel = unit === 'million_SAR' ? 'بالملايين' : unit === 'thousand_SAR' ? 'بالآلاف' : unit === 'SAR' ? 'بالريال السعودي' : 'غير محدد';
+                    if (!raw || mult === 1) {
+                      return (
+                        <Typography variant="body2" sx={{ color: '#4d4d4d' }}>
+                          {unit === 'SAR' || mult === 1 ? 'القيم بالريال السعودي مباشرة (بدون تحويل).' : `الوحدة: ${unitLabel}`}
+                        </Typography>
+                      );
+                    }
+                    const result = raw * mult;
+                    return (
+                      <>
+                        <Typography variant="body2" sx={{ color: '#4d4d4d' }}>
+                          تم اكتشاف أن القيم {unitLabel}. تم تحويل القيمة كما يلي:
+                        </Typography>
+                        <Typography variant="body2" sx={{ mt: 0.5, direction: 'ltr', fontFamily: 'monospace', color: '#1e6641' }}>
+                          {raw.toLocaleString('en-US')} × {mult.toLocaleString('en-US')} = {result.toLocaleString('en-US')}
+                        </Typography>
+                      </>
+                    );
+                  })()}
                   </Box>
+              </Box>
+            )}
+
+            {/* Extraction Details */}
                   {evidenceData.extraction_method && (
                     <Box sx={{ 
                       p: 3,
@@ -221,9 +187,6 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                       }}>
                         <strong>طريقة الاستخراج:</strong> {evidenceData.extraction_method}
                       </Typography>
-                    </Box>
-                  )}
-                </Box>
               </Box>
             )}
 
@@ -293,7 +256,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                         setSubmitted(true);
                         // Send correction to backend
                         try {
-                          const res = await fetch('http://localhost:5003/api/correct_retained_earnings', {
+                          const res = await fetch(`${API_URL}/api/correct_retained_earnings`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -303,13 +266,18 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                             })
                           });
                           const data = await res.json();
-                          if (data.status === 'success' && data.updated) {
-                            if (typeof window.updateRowAfterCorrection === 'function') {
-                              window.updateRowAfterCorrection(data.updated);
+                          if (data.status === 'success') {
+                            // Update local view of value
+                            evidenceData.value = correctionValue;
+                            // Trigger dashboard refresh
+                            if (typeof onDataUpdate === 'function') {
+                              onDataUpdate();
                             }
                           }
                         } catch (e) {}
                         setVerifyMode(null);
+                        // Close the modal after save
+                        if (typeof onClose === 'function') onClose();
                       }}
                     >
                       إرسال التصحيح
@@ -324,7 +292,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                 )}
               </Box>
             )}
-          </Box>
+          </>
         )}
       </Box>
     </Modal>
@@ -497,7 +465,7 @@ const InlineEditableCell = ({ value, onSave, fieldType, companySymbol, companyNa
     
     setSaving(true);
     try {
-      const response = await fetch('http://localhost:5003/api/correct_field_value', {
+      const response = await fetch(`${API_URL}/api/correct_field_value`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -626,12 +594,94 @@ function App() {
   const [customExportDate, setCustomExportDate] = useState("");
   const [customFileName, setCustomFileName] = useState("");
   const [customExportExpanded, setCustomExportExpanded] = useState(false);
+  // Background jobs state
+  const [pdfJobStatus, setPdfJobStatus] = useState({ status: 'idle' });
+  const [netJobStatus, setNetJobStatus] = useState({ status: 'idle' });
+  const [isPdfRunning, setIsPdfRunning] = useState(false);
+  const [isNetRunning, setIsNetRunning] = useState(false);
+  const [pdfPollId, setPdfPollId] = useState(null);
+  const [netPollId, setNetPollId] = useState(null);
+  const [pdfProgressOpen, setPdfProgressOpen] = useState(false);
+  const [netProgressOpen, setNetProgressOpen] = useState(false);
+  const [pdfPhase, setPdfPhase] = useState('running'); // 'running' | 'finalizing'
+  const [netPhase, setNetPhase] = useState('running'); // 'running' | 'finalizing'
+  // Unified update modal state
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [selectPdf, setSelectPdf] = useState(false);
+  const [selectNet, setSelectNet] = useState(false);
+  const [chainNetAfterPdf, setChainNetAfterPdf] = useState(false); // kept for compatibility but unused when running both in parallel
+  // Combined progress modal when running both
+  const [bothProgressOpen, setBothProgressOpen] = useState(false);
+  const [bothPdfRunning, setBothPdfRunning] = useState(false);
+  const [bothNetRunning, setBothNetRunning] = useState(false);
+  const [bothIsStopping, setBothIsStopping] = useState(false);
+
+  const startPollPdf = (onComplete) => {
+    if (pdfPollId) return;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/pdfs/status`);
+        const data = await res.json();
+        setPdfJobStatus(data);
+        if (data.status === 'completed' || data.status === 'idle') {
+          clearInterval(id);
+          setPdfPollId(null);
+          setIsPdfRunning(false);
+          setPdfProgressOpen(false);
+          // Trigger dashboard data reload (ensure backend has flushed files)
+          setTimeout(() => {
+            fetchData();
+            // also refresh net profit map in case both was selected
+            fetchNetProfitData();
+          }, 300);
+          if (typeof onComplete === 'function') {
+            onComplete();
+          }
+        }
+      } catch (e) {}
+    }, 1500);
+    setPdfPollId(id);
+  };
+
+  const startPollNet = (onComplete) => {
+    if (netPollId) return;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/net_profit/status`);
+        const data = await res.json();
+        setNetJobStatus(data);
+        if (data.status === 'completed' || data.status === 'idle') {
+          clearInterval(id);
+          setNetPollId(null);
+          setIsNetRunning(false);
+          setNetProgressOpen(false);
+          // Trigger dashboard data reload (ensure backend has flushed files)
+          setTimeout(() => {
+            // refresh net profit and flows
+            fetchNetProfitData();
+            fetchData();
+          }, 300);
+          if (typeof onComplete === 'function') {
+            onComplete();
+          }
+        }
+      } catch (e) {}
+    }, 1500);
+    setNetPollId(id);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (pdfPollId) clearInterval(pdfPollId);
+      if (netPollId) clearInterval(netPollId);
+    };
+  }, [pdfPollId, netPollId]);
 
   // Function to fetch evidence data
   const fetchEvidenceData = async (companySymbol, quarter) => {
     console.log(`Fetching evidence for ${companySymbol} quarter ${quarter}`);
     try {
-      const response = await fetch(`http://localhost:5003/api/extractions/${companySymbol}?quarter=${quarter}`);
+      const response = await fetch(`${API_URL}/api/extractions/${companySymbol}?quarter=${quarter}`);
       if (response.ok) {
         const data = await response.json();
         console.log('Evidence data received:', data);
@@ -663,7 +713,7 @@ function App() {
   // Function to fetch net profit data
   const fetchNetProfitData = async () => {
     try {
-      const response = await fetch('http://localhost:5003/api/net-profit');
+      const response = await fetch(`${API_URL}/api/net-profit`);
       if (response.ok) {
         const data = await response.json();
         setNetProfitData(data);
@@ -687,7 +737,7 @@ function App() {
   const handleReset = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5003/api/refresh', {
+      const response = await fetch(`${API_URL}/api/refresh`, {
         method: 'POST',
       });
       const data = await response.json();
@@ -704,10 +754,11 @@ function App() {
     }
   };
 
+
   // Function to handle Excel export
   const handleExcelExport = async () => {
     try {
-      const response = await fetch(`http://localhost:5003/api/export_excel?quarter=${quarterFilter}`);
+      const response = await fetch(`${API_URL}/api/export_excel?quarter=${quarterFilter}`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -735,7 +786,7 @@ function App() {
       
       // Refetch user exports so the new file appears in the sidebar
       setUserExportsLoading(true);
-      fetch('http://localhost:5003/api/user_exports')
+      fetch(`${API_URL}/api/user_exports`)
         .then(res => res.json())
         .then(data => {
           setUserExports(data);
@@ -763,7 +814,7 @@ function App() {
       });
 
     // Load quarterly flow data (CSV) from backend API
-    const loadQuarterlyFlowData = fetch("http://localhost:5003/api/retained_earnings_flow.csv")
+    const loadQuarterlyFlowData = fetch(`${API_URL}/api/retained_earnings_flow.csv?t=${Date.now()}`)
       .then((res) => {
         if (!res.ok) {
           throw new Error(`HTTP error! status: ${res.status}`);
@@ -906,7 +957,7 @@ function App() {
   useEffect(() => {
     console.log('🔄 Fetching archived snapshots...');
     setSnapshotsLoading(true);
-    fetch('http://localhost:5003/api/ownership_snapshots')
+    fetch(`${API_URL}/api/ownership_snapshots`)
       .then(res => {
         console.log('📡 Snapshots response status:', res.status);
         if (!res.ok) {
@@ -930,7 +981,7 @@ function App() {
   useEffect(() => {
     console.log('🔄 Fetching user exports...');
     setUserExportsLoading(true);
-    fetch('http://localhost:5003/api/user_exports')
+    fetch(`${API_URL}/api/user_exports`)
       .then(res => {
         console.log('📡 User exports response status:', res.status);
         if (!res.ok) {
@@ -954,7 +1005,7 @@ function App() {
   const fetchSnapshots = () => {
     console.log('🔄 Manual fetchSnapshots called...');
     setSnapshotsLoading(true);
-    fetch('http://localhost:5003/api/ownership_snapshots')
+    fetch(`${API_URL}/api/ownership_snapshots`)
       .then(res => {
         console.log('📡 Manual snapshots response status:', res.status);
         if (!res.ok) {
@@ -1121,7 +1172,7 @@ function App() {
         if (!isNaN(numValue)) {
           const isPositive = numValue >= 0;
           const color = isPositive ? '#2e7d32' : '#d32f2f';
-          const sign = isPositive ? '+' : '';
+          const sign = numValue === 0 ? '' : (isPositive ? '+' : '');
           return (
             <Typography sx={{ color, fontWeight: 'bold' }}>
               {sign}{numValue.toLocaleString('en-US')} SAR
@@ -1146,7 +1197,7 @@ function App() {
         if (!isNaN(numValue)) {
           const isPositive = numValue >= 0;
           const color = isPositive ? '#2e7d32' : '#d32f2f';
-          const sign = isPositive ? '+' : '';
+          const sign = numValue === 0 ? '' : (isPositive ? '+' : '');
           return (
             <Typography sx={{ color, fontWeight: 'bold' }}>
               {sign}{numValue.toLocaleString('en-US')} SAR
@@ -1195,8 +1246,13 @@ function App() {
         }
         const numValue = parseFloat(value);
         if (!isNaN(numValue)) {
+          const isPositive = numValue >= 0;
+          const color = isPositive ? '#2e7d32' : '#d32f2f';
+          const sign = numValue === 0 ? '' : (isPositive ? '+' : '');
           return (
-            <Typography>{numValue.toLocaleString('en-US')}</Typography>
+            <Typography sx={{ color, fontWeight: 'bold' }}>
+              {sign}{numValue.toLocaleString('en-US')} SAR
+            </Typography>
           );
         }
         return value;
@@ -1217,7 +1273,7 @@ function App() {
         if (!isNaN(numValue)) {
           const isPositive = numValue >= 0;
           const color = isPositive ? '#2e7d32' : '#d32f2f';
-          const sign = isPositive ? '+' : '';
+          const sign = numValue === 0 ? '' : (isPositive ? '+' : '');
           return (
             <Typography sx={{ color, fontWeight: 'bold' }}>
               {sign}{numValue.toLocaleString('en-US')} SAR
@@ -1286,7 +1342,7 @@ function App() {
   const confirmDeleteExport = async () => {
     if (!fileToDelete) return;
     try {
-      await fetch(`http://localhost:5003/api/user_exports/${fileToDelete.filename}`, { method: 'DELETE' });
+      await fetch(`${API_URL}/api/user_exports/${fileToDelete.filename}`, { method: 'DELETE' });
       setUserExports((prev) => prev.filter(f => f.filename !== fileToDelete.filename));
     } catch (e) {}
     setDeleteDialogOpen(false);
@@ -1304,7 +1360,7 @@ function App() {
       setLoading(true);
       
       // Build the API URL with custom date and filename
-      let apiUrl = `http://localhost:5003/api/export_excel?quarter=${quarterFilter}&custom_date=${customExportDate}`;
+      let apiUrl = `${API_URL}/api/export_excel?quarter=${quarterFilter}&custom_date=${customExportDate}`;
       if (customFileName.trim()) {
         apiUrl += `&custom_filename=${encodeURIComponent(customFileName.trim())}`;
       }
@@ -1341,7 +1397,7 @@ function App() {
       
       // Refetch user exports so the new file appears in the sidebar
       setUserExportsLoading(true);
-      fetch('http://localhost:5003/api/user_exports')
+      fetch(`${API_URL}/api/user_exports`)
         .then(res => res.json())
         .then(data => {
           setUserExports(data);
@@ -1557,6 +1613,195 @@ function App() {
                 تصدير الجدول
               </Button>
             </Tooltip>
+
+            {/* Unified Update Button */}
+            <Tooltip title="تحديث البيانات" arrow placement="top">
+              <Button
+                variant="outlined"
+                onClick={() => setUpdateModalOpen(true)}
+                sx={{
+                  minWidth: 150,
+                  height: 48,
+                  px: 3,
+                  py: 2,
+                  borderRadius: 3,
+                  color: '#1e6641',
+                  borderColor: '#1e6641',
+                  fontWeight: 600,
+                  fontSize: 14,
+                  textTransform: 'none',
+                }}
+              >
+                تحديث
+              </Button>
+            </Tooltip>
+
+            {/* PDFs Progress Modal */}
+            <Modal open={pdfProgressOpen} onClose={() => {}}>
+              <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 420, bgcolor: 'background.paper', borderRadius: 2, boxShadow: 24, p: 3, direction: 'rtl' }}>
+                <Typography variant="h6" sx={{ fontWeight: 'bold', color: '#1e6641', mb: 1 }}>تحديث PDF قيد التنفيذ</Typography>
+                <LinearProgress color="success" />
+                <Typography sx={{ fontSize: 13, color: '#1e6641', mt: 1 }}>
+                  الحالة: {pdfJobStatus?.status || 'جاري التنفيذ'} — المُنجز: {pdfJobStatus?.processed || 0}
+                  {pdfJobStatus?.current_symbol ? ` — الحالي: ${pdfJobStatus.current_symbol}` : ''}
+                </Typography>
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+                  <Button variant="outlined" onClick={async () => { try { await fetch(`${API_URL}/api/pdfs/stop`, { method: 'POST' }); } catch (e) {} }} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
+                </Box>
+              </Box>
+            </Modal>
+
+            {/* Update Selection Modal */}
+            <Dialog open={updateModalOpen} onClose={() => setUpdateModalOpen(false)}>
+              <DialogTitle sx={{ fontWeight: 700, color: '#1e6641' }}>اختر نوع التحديث</DialogTitle>
+              <DialogContent sx={{ minWidth: 360 }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={selectPdf} onChange={(e) => setSelectPdf(e.target.checked)} />
+                    تحديث الأرباح المبقاة (تنزيل واستخراج)
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={selectNet} onChange={(e) => setSelectNet(e.target.checked)} />
+                    تحديث صافي الربح
+                  </label>
+                  <Typography variant="caption" sx={{ color: '#666' }}>يمكن اختيار واحد أو كلاهما.</Typography>
+                </Box>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setUpdateModalOpen(false)} sx={{ color: '#666' }}>إلغاء</Button>
+                <Button
+                  variant="contained"
+                  disabled={!selectPdf && !selectNet}
+                  onClick={async () => {
+                    setUpdateModalOpen(false);
+                    if (selectPdf && !selectNet) {
+                      try {
+                        const res = await fetch(`${API_URL}/api/run_pdfs_pipeline`, { method: 'POST' });
+                        const data = await res.json();
+                        if (res.status === 202) {
+                          setIsPdfRunning(true);
+                          setPdfJobStatus({ status: 'running' });
+                          setPdfProgressOpen(true);
+                          startPollPdf();
+                        } else {
+                          alert('❌ لم يتم بدء العملية: ' + (data.message || ''));
+                        }
+                      } catch (e) {
+                        alert('❌ خطأ في الاتصال بالخادم: ' + e.message);
+                      }
+                    } else if (!selectPdf && selectNet) {
+                      try {
+                        const res = await fetch(`${API_URL}/api/run_net_profit_scrape`, { method: 'POST' });
+                        const data = await res.json();
+                        if (res.status === 202) {
+                          setIsNetRunning(true);
+                          setNetJobStatus({ status: 'running' });
+                          setNetProgressOpen(true);
+                          startPollNet();
+                        } else {
+                          alert('❌ لم يتم بدء العملية: ' + (data.message || ''));
+                        }
+                      } catch (e) {
+                        alert('❌ خطأ في الاتصال بالخادم: ' + e.message);
+                      }
+                    } else {
+                      // Run both in parallel
+                      try {
+                        // Start PDFs
+                        const resPdf = await fetch(`${API_URL}/api/run_pdfs_pipeline`, { method: 'POST' });
+                        const dataPdf = await resPdf.json();
+                        if (resPdf.status === 202) {
+                          // Combined modal controls instead of individual
+                          setPdfJobStatus({ status: 'running' });
+                          setBothProgressOpen(true);
+                          setBothPdfRunning(true);
+                          startPollPdf(() => {
+                            setBothPdfRunning(false);
+                            if (!bothNetRunning) {
+                              setBothProgressOpen(false);
+                            }
+                          });
+                        } else {
+                          alert('❌ لم يتم بدء عملية تحديث PDF: ' + (dataPdf.message || ''));
+                        }
+                        // Start Net Profit
+                        const resNet = await fetch(`${API_URL}/api/run_net_profit_scrape`, { method: 'POST' });
+                        const dataNet = await resNet.json();
+                        if (resNet.status === 202) {
+                          setNetJobStatus({ status: 'running' });
+                          setBothProgressOpen(true);
+                          setBothNetRunning(true);
+                          startPollNet(() => {
+                            setBothNetRunning(false);
+                            if (!bothPdfRunning) {
+                              setBothProgressOpen(false);
+                            }
+                          });
+                        } else {
+                          alert('❌ لم يتم بدء تحديث صافي الربح: ' + (dataNet.message || ''));
+                        }
+                      } catch (e) {
+                        alert('❌ خطأ في الاتصال بالخادم: ' + e.message);
+                      } finally {
+                        setSelectPdf(false);
+                        setSelectNet(false);
+                      }
+                    }
+                  }}
+                  sx={{ bgcolor: '#1e6641', '&:hover': { bgcolor: '#14532d' } }}
+                >
+                  بدء التحديث
+                </Button>
+              </DialogActions>
+            </Dialog>
+
+            {/* Combined Progress Modal for Both */}
+            <Modal open={bothProgressOpen} onClose={() => {}}>
+              <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 520, bgcolor: 'background.paper', borderRadius: 2, boxShadow: 24, p: 3, direction: 'rtl' }}>
+                <Typography variant="h6" sx={{ fontWeight: 'bold', color: '#1e6641', mb: 2 }}>التحديث قيد التنفيذ</Typography>
+                <LinearProgress color="success" />
+                {/* Finalizing hint */}
+                {((pdfJobStatus?.status === 'finalizing') || (netJobStatus?.status === 'finalizing')) && (
+                  <Typography sx={{ mt: 1, fontSize: 13, color: '#555' }}>
+                    جارٍ الإنهاء: إيقاف العمليات، حساب النتائج، وتحديث اللوحة. يرجى الانتظار حتى يكتمل التحديث.
+                  </Typography>
+                )}
+                <Typography sx={{ fontSize: 13, color: '#1e6641', mt: 1 }}>
+                  الأرباح المبقاة: {pdfJobStatus?.status || 'جاري التنفيذ'}{pdfJobStatus?.current_symbol ? ` — ${pdfJobStatus.current_symbol}` : ''}
+                </Typography>
+                <Typography sx={{ fontSize: 13, color: '#ff9800' }}>
+                  صافي الربح: {netJobStatus?.status || 'جاري التنفيذ'}{netJobStatus?.current_symbol ? ` — ${netJobStatus.current_symbol}` : ''}
+                </Typography>
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+                  <Button
+                    variant="outlined"
+                    onClick={async () => {
+                      setBothIsStopping(true);
+                      try { await fetch(`${API_URL}/api/pdfs/stop`, { method: 'POST' }); } catch (e) {}
+                      try { await fetch(`${API_URL}/api/net_profit/stop`, { method: 'POST' }); } catch (e) {}
+                    }}
+                    disabled={bothIsStopping}
+                    sx={{ color: bothIsStopping ? '#999' : '#b71c1c', borderColor: bothIsStopping ? '#ccc' : '#b71c1c' }}
+                  >
+                    {bothIsStopping ? 'جاري الإنهاء...' : 'إيقاف'}
+                  </Button>
+                </Box>
+              </Box>
+            </Modal>
+            {/* Net Profit Progress Modal */}
+            <Modal open={netProgressOpen} onClose={() => {}}>
+              <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 420, bgcolor: 'background.paper', borderRadius: 2, boxShadow: 24, p: 3, direction: 'rtl' }}>
+                <Typography variant="h6" sx={{ fontWeight: 'bold', color: '#ff9800', mb: 1 }}>تحديث صافي الربح قيد التنفيذ</Typography>
+                <LinearProgress color="warning" />
+                <Typography sx={{ fontSize: 13, color: '#ff9800', mt: 1 }}>
+                  الحالة: {netJobStatus?.status || 'جاري التنفيذ'} — المُنجز: {netJobStatus?.processed || 0}
+                  {netJobStatus?.current_symbol ? ` — الحالي: ${netJobStatus.current_symbol}` : ''}
+                </Typography>
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+                  <Button variant="outlined" onClick={async () => { try { await fetch(`${API_URL}/api/net_profit/stop`, { method: 'POST' }); } catch (e) {} }} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
+                </Box>
+              </Box>
+            </Modal>
           </Box>
         </Box>
         <Box sx={{ display: "flex", gap: 2, alignItems: "center", mb: 2 }}>
@@ -1709,7 +1954,7 @@ function App() {
         onSave={async (companySymbol, fieldType, newValue, feedback) => {
           setEditLoading(true);
           try {
-            const response = await fetch('http://localhost:5003/api/correct_retained_earnings', {
+            const response = await fetch(`${API_URL}/api/correct_retained_earnings`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -1888,7 +2133,7 @@ function App() {
                 <Tooltip title="تحميل" arrow>
                   <IconButton
                     aria-label="تحميل"
-                    href={`http://localhost:5003${file.download_url}`}
+                    href={`${API_URL}${file.download_url}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     sx={{
@@ -1975,29 +2220,34 @@ function App() {
         
         {/* Custom Export Section - Right next to Quarterly Archives */}
         <Box sx={{ px: 2, mb: 2 }}>
-          <Box sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            bgcolor: '#f8f9fa',
-            borderRadius: 3,
-            px: 2,
-            py: 1.5,
-            border: '1px solid #e9ecef',
-            cursor: 'pointer',
-            transition: 'all 0.3s ease-in-out',
-            '&:hover': {
-              bgcolor: '#e9ecef',
-              borderColor: '#1e6641',
-              transform: 'translateY(-1px)',
-              boxShadow: '0 4px 12px rgba(30, 102, 65, 0.15)',
-            },
-            '&:active': {
-              transform: 'translateY(0px)',
-            }
-          }}
-          onClick={() => setCustomExportExpanded(!customExportExpanded)}
+          <Tooltip 
+            title="تصدير البيانات المالية لتاريخ محدد أو نطاق زمني معين مع إمكانية تخصيص البيانات المطلوبة"
+            arrow
+            placement="top"
           >
+            <Box sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              bgcolor: '#f8f9fa',
+              borderRadius: 3,
+              px: 2,
+              py: 1.5,
+              border: '1px solid #e9ecef',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease-in-out',
+              '&:hover': {
+                bgcolor: '#e9ecef',
+                borderColor: '#1e6641',
+                transform: 'translateY(-1px)',
+                boxShadow: '0 4px 12px rgba(30, 102, 65, 0.15)',
+              },
+              '&:active': {
+                transform: 'translateY(0px)',
+              }
+            }}
+            onClick={() => setCustomExportExpanded(!customExportExpanded)}
+            >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
               <Box sx={{ 
                 width: 20, 
@@ -2018,7 +2268,6 @@ function App() {
                   '100%': { transform: 'scale(1)' },
                 }
               }}>
-                ⚙️
               </Box>
               <Typography
                 variant="subtitle2"
@@ -2030,6 +2279,18 @@ function App() {
                 }}
               >
                 تصدير مخصص
+              </Typography>
+              <Typography
+                variant="caption"
+                sx={{
+                  color: '#6c757d',
+                  fontSize: 11,
+                  opacity: 0.8,
+                  display: 'block',
+                  lineHeight: 1.2
+                }}
+              >
+                تصدير البيانات لتاريخ محدد
               </Typography>
             </Box>
             <IconButton
@@ -2049,10 +2310,312 @@ function App() {
               <Add />
             </IconButton>
           </Box>
+          </Tooltip>
         </Box>
         
         {/* Collapsible Custom Export Controls */}
-        <Collapse in={customExportExpanded}>
+        <Modal 
+          open={customExportExpanded} 
+          onClose={() => setCustomExportExpanded(false)}
+          closeAfterTransition
+        >
+          <Fade in={customExportExpanded}>
+            <Box sx={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: { xs: '90vw', sm: 480 },
+              bgcolor: 'background.paper',
+              borderRadius: 4,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+              p: 0,
+              outline: 'none',
+              direction: 'rtl'
+            }}>
+              {/* Header */}
+              <Box sx={{
+                bgcolor: 'linear-gradient(135deg, #1e6641 0%, #2d7a4a 100%)',
+                color: 'white',
+                px: 3,
+                py: 2.5,
+                borderRadius: '16px 16px 0 0',
+                position: 'relative'
+              }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Box sx={{
+                      width: 40,
+                      height: 40,
+                      bgcolor: 'rgba(255,255,255,0.2)',
+                      borderRadius: '50%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 18,
+                      fontWeight: 'bold'
+                    }}>
+                      E
+                    </Box>
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 'bold', fontSize: 16, mb: 0.5 }}>
+                        التصدير المخصص
+                      </Typography>
+                      <Typography variant="body2" sx={{ opacity: 0.9, fontSize: 12 }}>
+                        تصدير البيانات لتاريخ معين
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <IconButton
+                    onClick={() => setCustomExportExpanded(false)}
+                    sx={{
+                      color: 'white',
+                      bgcolor: 'rgba(255,255,255,0.1)',
+                      '&:hover': { bgcolor: 'rgba(255,255,255,0.2)' }
+                    }}
+                    size="small"
+                  >
+                    ✕
+                  </IconButton>
+                </Box>
+              </Box>
+
+              {/* Content */}
+              <Box sx={{ p: 3 }}>
+                {/* Date Selection */}
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle2" sx={{ 
+                    fontWeight: 600, 
+                    color: '#1e6641', 
+                    mb: 1.5, 
+                    fontSize: 14,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1
+                  }}>
+                    تاريخ التصدير
+                  </Typography>
+                  
+                  <TextField
+                    type="date"
+                    fullWidth
+                    value={customExportDate}
+                    onChange={(e) => setCustomExportDate(e.target.value)}
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        borderRadius: 3,
+                        fontSize: 14,
+                        "& fieldset": { 
+                          borderColor: "#e0e0e0",
+                          borderWidth: 2
+                        },
+                        "&:hover fieldset": { 
+                          borderColor: "#1e6641",
+                          borderWidth: 2
+                        },
+                        "&:focus fieldset": { 
+                          borderColor: "#1e6641",
+                          borderWidth: 2
+                        },
+                      },
+                      "& .MuiInputLabel-root": { 
+                        color: "#666", 
+                        fontSize: 13,
+                        fontWeight: 500
+                      },
+                    }}
+                    size="medium"
+                  />
+                  
+                  {/* Quarter Preview */}
+                  {customExportDate && (
+                    <Box sx={{ 
+                      mt: 2,
+                      p: 3,
+                      bgcolor: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+                      borderRadius: 3,
+                      border: '2px solid #0ea5e9',
+                      animation: 'fadeInUp 0.4s ease-out'
+                    }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+                        <Box sx={{
+                          width: 32,
+                          height: 32,
+                          bgcolor: '#0ea5e9',
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: 'white',
+                          fontSize: 14,
+                          fontWeight: 'bold'
+                        }}>
+                          Q
+                        </Box>
+                        <Typography variant="subtitle2" sx={{ 
+                          color: '#0369a1', 
+                          fontWeight: 'bold',
+                          fontSize: 14
+                        }}>
+                          الربع المحتوي على التاريخ
+                        </Typography>
+                      </Box>
+                      <Typography variant="h6" sx={{ 
+                        color: '#0369a1', 
+                        fontWeight: 'bold',
+                        fontSize: 18,
+                        textAlign: 'center'
+                      }}>
+                        {getQuarterFromDate(customExportDate)}
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+
+                {/* File Name */}
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle2" sx={{ 
+                   fontWeight: 600, 
+                    color: '#1e6641', 
+                    mb: 1.5, 
+                    fontSize: 14,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1
+                  }}>
+                    اسم الملف المخصص (اختياري)
+                  </Typography>
+                  
+                  <TextField
+                    fullWidth
+                    placeholder="مثال: تقرير_ديسمبر_2024"
+                    value={customFileName}
+                    onChange={(e) => setCustomFileName(e.target.value)}
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        borderRadius: 3,
+                        fontSize: 14,
+                        "& fieldset": { 
+                          borderColor: "#e0e0e0",
+                          borderWidth: 2
+                        },
+                        "&:hover fieldset": { 
+                          borderColor: "#1e6641",
+                          borderWidth: 2
+                        },
+                        "&:focus fieldset": { 
+                          borderColor: "#1e6641",
+                          borderWidth: 2
+                        },
+                      },
+                      "& .MuiInputLabel-root": { 
+                        color: "#666", 
+                        fontSize: 13,
+                        fontWeight: 500
+                      },
+                    }}
+                    size="medium"
+                  />
+                  <Typography variant="caption" sx={{ 
+                    color: '#666', 
+                    fontSize: 11, 
+                    mt: 0.5, 
+                    display: 'block',
+                    fontStyle: 'italic'
+                  }}>
+                    سيتم إضافة التاريخ والوقت تلقائياً إذا لم تحدد اسماً مخصصاً
+                  </Typography>
+                </Box>
+
+                {/* Action Buttons */}
+                <Box sx={{ 
+                  display: 'flex', 
+                  gap: 2, 
+                  justifyContent: 'flex-end',
+                  mt: 3
+                }}>
+                  <Button
+                    variant="outlined"
+                    onClick={() => setCustomExportExpanded(false)}
+                    sx={{
+                      borderRadius: 3,
+                      px: 3,
+                      py: 1.2,
+                      borderColor: '#e0e0e0',
+                      color: '#666',
+                      fontWeight: 600,
+                      fontSize: 13,
+                      textTransform: 'none',
+                      '&:hover': {
+                        borderColor: '#d0d0d0',
+                        bgcolor: '#f8f8f8'
+                      }
+                    }}
+                  >
+                    إلغاء
+                  </Button>
+                  
+                  <Button
+                    variant="contained"
+                    onClick={handleCustomDateExport}
+                    disabled={!customExportDate}
+                    sx={{
+                      borderRadius: 3,
+                      px: 4,
+                      py: 1.2,
+                      bgcolor: customExportDate ? '#1e6641' : '#ccc',
+                      color: 'white',
+                      fontWeight: 'bold',
+                      fontSize: 14,
+                      textTransform: 'none',
+                      minWidth: 140,
+                      transition: 'all 0.3s ease-out',
+                      '&:hover': {
+                        bgcolor: customExportDate ? '#14532d' : '#ccc',
+                        transform: customExportDate ? 'translateY(-2px)' : 'none',
+                        boxShadow: customExportDate ? '0 8px 20px rgba(30, 102, 65, 0.3)' : 'none',
+                      },
+                      '&:disabled': {
+                        bgcolor: '#ccc',
+                        cursor: 'not-allowed',
+                        transform: 'none'
+                      }
+                    }}
+                    startIcon={<FileDownloadIcon />}
+                  >
+                    {customExportDate ? 'تصدير' : 'اختر تاريخ أولاً'}
+                  </Button>
+                </Box>
+              </Box>
+
+              {/* Loading Overlay */}
+              {loading && (
+                <Box sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  bgcolor: 'rgba(255,255,255,0.8)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: 4
+                }}>
+                  <Box sx={{ textAlign: 'center' }}>
+                    <CircularProgress size={40} sx={{ color: '#1e6641', mb: 2 }} />
+                    <Typography variant="body2" sx={{ color: '#1e6641', fontWeight: 600 }}>
+                      جاري التصدير...
+                    </Typography>
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          </Fade>
+        </Modal>
+
+        {/* Keep the old collapse structure for backward compatibility, but hide it */}
+        <Collapse in={false}>
           <Box sx={{ 
             px: 2, 
             mb: 2,
@@ -2179,7 +2742,6 @@ function App() {
           ) : (
             snapshots.map((snap, idx) => (
               <ListItem key={idx} sx={{ pl: 2, pr: 2, py: 1, borderBottom: '1px solid #e0e0e0', display: 'flex', alignItems: 'center' }}>
-                <span style={{ fontSize: 22, marginLeft: 8 }}>📄</span>
                 <Typography sx={{ fontWeight: 500, color: '#1e6641', flexGrow: 1, fontSize: 16 }}>
                   {`${snap.year} ${snap.quarter.replace('Q', 'Q')} — ${snap.snapshot_date}`}
                 </Typography>
@@ -2188,7 +2750,7 @@ function App() {
                     variant="contained"
                     color="success"
                     size="small"
-                    href={`http://localhost:5003${snap.download_url}`}
+                    href={`${API_URL}${snap.download_url}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     sx={{ minWidth: 0, px: 2, py: 1, borderRadius: 2, fontWeight: 600 }}

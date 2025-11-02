@@ -13,6 +13,7 @@ from datetime import datetime
 import openai
 import os
 from typing import Dict, List, Optional
+import os
 import logging
 
 # Configure logging
@@ -26,7 +27,7 @@ class EvidenceScreenshotGenerator:
     """Simple screenshot generator for evidence"""
     
     def generate_highlight_screenshot(self, pdf_path: str, search_value: str, company_symbol: str) -> Optional[str]:
-        """Generate screenshot highlighting the found value"""
+        """Generate screenshot highlighting the found value and unit text on the same page"""
         try:
             import fitz
             
@@ -44,6 +45,12 @@ class EvidenceScreenshotGenerator:
                 if search_value in text:
                     # Found the page, now highlight the value
                     page = self._highlight_value_on_page(page, search_value)
+                    
+                    # Also try to highlight the unit declaration on the same page
+                    try:
+                        self._highlight_units_on_page(page, text)
+                    except Exception as e:
+                        logger.warning(f"Unit highlight failed: {e}")
                     
                     # Take screenshot with highlighting - use unique filename
                     pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x zoom for better quality
@@ -83,11 +90,59 @@ class EvidenceScreenshotGenerator:
             logger.error(f"Highlighting error: {e}")
             return page
 
+    def _highlight_units_on_page(self, page, page_text: str) -> None:
+        """Attempt to find and highlight unit declaration text on the page.
+        Draw a second rectangle (green) around the first matching unit phrase.
+        """
+        # Candidate phrases (simple contains search via page.search_for)
+        unit_phrases = [
+            # English
+            "in millions of saudi riyals",
+            "in million of saudi riyals",
+            "in millions",
+            "in million",
+            "millions of saudi riyals",
+            "in thousands of saudi riyals",
+            "in thousand of saudi riyals",
+            "in thousands",
+            "in thousand",
+            "thousands of saudi riyals",
+            "saudi riyals",
+            "SAR",
+            # Arabic
+            "بالملايين",
+            "الملايين",
+            "مليون",
+            "بالآلاف",
+            "بالالاف",
+            "ألف",
+            "الآلاف",
+            "بالريال السعودي",
+            "ريال سعودي",
+            "ريال"
+        ]
+        # Try longer phrases first for specificity
+        unit_phrases.sort(key=len, reverse=True)
+        for phrase in unit_phrases:
+            areas = page.search_for(phrase, quads=False)
+            if areas:
+                rect = areas[0]
+                try:
+                    unit_rect = page.add_rect_annot(rect)
+                    # Differentiate color from value highlight (green)
+                    unit_rect.set_colors(stroke=(0, 1, 0))
+                    unit_rect.set_colors(fill=(0, 1, 0))
+                    unit_rect.set_opacity(0.25)
+                    logger.info(f"Highlighted unit phrase '{phrase}' on page")
+                except Exception as e:
+                    logger.warning(f"Failed to draw unit rectangle: {e}")
+                break
+
 class RetainedEarningsExtractor:
     def __init__(self):
         self.target_years = []
         self.most_recent_year = None
-        
+    
     def detect_years(self, text: str) -> List[int]:
         """Detect available years in the financial statement"""
         current_year = datetime.now().year
@@ -109,6 +164,76 @@ class RetainedEarningsExtractor:
         
         logger.info(f"Detected years: {realistic_years}")
         return realistic_years
+
+    # --- New: Unit detection helpers ---
+    def _detect_units_from_text(self, text: str) -> Dict[str, object]:
+        """Detect unit declarations in nearby text. Returns dict with unit and multiplier."""
+        try:
+            lowered = text.lower()
+            # English patterns
+            english_million = re.search(r"all\s+amounts?.*in\s+millions?\s+of\s+saudi\s+riyals|in\s+millions\b|millions\s+of\s+saudi\s+riyals", lowered)
+            english_thousand = re.search(r"all\s+amounts?.*in\s+thousands?\s+of\s+saudi\s+riyals|in\s+thousands\b|thousands\s+of\s+saudi\s+riyals", lowered)
+            english_sar = re.search(r"saudi\s+riyals?|\bSAR\b", lowered)
+            
+            # Arabic patterns (approximate common variants)
+            arabic_million = re.search(r"بالملايين|\bمليون\b|\bالملايين\b", text)
+            arabic_thousand = re.search(r"بال[اآ]لاف|\bألف\b|\bال[اآ]لاف\b", text)
+            arabic_sar = re.search(r"بالريال\s+السعودي|\bريال\b", text)
+            
+            if english_million or arabic_million:
+                return { 'unit_detected': 'million_SAR', 'applied_multiplier': 1_000_000 }
+            if english_thousand or arabic_thousand:
+                return { 'unit_detected': 'thousand_SAR', 'applied_multiplier': 1_000 }
+            if english_sar or arabic_sar:
+                return { 'unit_detected': 'SAR', 'applied_multiplier': 1 }
+            
+            # Default when nothing explicit found
+            return { 'unit_detected': 'unknown', 'applied_multiplier': 1 }
+        except Exception as e:
+            logger.warning(f"Unit detection error: {e}")
+            return { 'unit_detected': 'unknown', 'applied_multiplier': 1 }
+
+    def _find_page_for_value(self, pdf_path: str, search_value: str) -> Optional[int]:
+        """Find the first page (1-based) that contains the given search value."""
+        try:
+            doc = fitz.open(pdf_path)
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                if page.search_for(str(search_value)):
+                    doc.close()
+                    return page_num + 1
+            doc.close()
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to locate page for value '{search_value}': {e}")
+            return None
+
+    def _detect_units_for_pdf(self, pdf_path: str, page_num: Optional[int] = None, search_value: Optional[str] = None) -> Dict[str, object]:
+        """
+        Detect units by reading text from a specific page if provided; otherwise, try to locate
+        the page via the search_value. Falls back to first page if needed.
+        """
+        try:
+            doc = fitz.open(pdf_path)
+            target_page_index = None
+            if page_num is not None and 1 <= page_num <= len(doc):
+                target_page_index = page_num - 1
+            elif search_value is not None:
+                for p in range(len(doc)):
+                    if doc[p].search_for(str(search_value)):
+                        target_page_index = p
+                        break
+            
+            # Fallback to first page if not found
+            if target_page_index is None:
+                target_page_index = 0
+            
+            page_text = doc[target_page_index].get_text()
+            doc.close()
+            return self._detect_units_from_text(page_text)
+        except Exception as e:
+            logger.warning(f"Failed to detect units for PDF: {e}")
+            return { 'unit_detected': 'unknown', 'applied_multiplier': 1 }
     
     def extract_with_spire_pdf(self, pdf_path: str) -> Optional[Dict]:
         """Extract using Spire.PDF if available"""
@@ -141,14 +266,19 @@ class RetainedEarningsExtractor:
                                                 if value_cell and value_cell.replace(',', '').isdigit():
                                                     numeric_value = float(value_cell.replace(',', ''))
                                                     if numeric_value >= 10000:
+                                                        # Detect units on the same page
+                                                        units = self._detect_units_for_pdf(pdf_path, page_num=page_index + 1, search_value=value_cell)
+                                                        scaled_value = numeric_value * units['applied_multiplier']
                                                         doc.Close()
                                                         return {
                                                             'success': True,
                                                             'value': value_cell,
-                                                            'numeric_value': numeric_value,
+                                                            'numeric_value': scaled_value,
                                                             'method': 'spire_pdf',
                                                             'year': year,
-                                                            'page': page_index + 1
+                                                            'page': page_index + 1,
+                                                            'unit_detected': units['unit_detected'],
+                                                            'applied_multiplier': units['applied_multiplier']
                                                         }
             doc.Close()
             return None
@@ -180,13 +310,19 @@ class RetainedEarningsExtractor:
                                         if value and str(value).replace(',', '').isdigit():
                                             numeric_value = float(str(value).replace(',', ''))
                                             if numeric_value >= 10000:
+                                                # Try to find the page for the found value and detect units
+                                                page_num = self._find_page_for_value(pdf_path, str(value))
+                                                units = self._detect_units_for_pdf(pdf_path, page_num=page_num, search_value=str(value))
+                                                scaled_value = numeric_value * units['applied_multiplier']
                                                 return {
                                                     'success': True,
                                                     'value': str(value),
-                                                    'numeric_value': numeric_value,
+                                                    'numeric_value': scaled_value,
                                                     'method': 'camelot',
                                                     'year': year,
-                                                    'page': 1
+                                                    'page': page_num if page_num else 1,
+                                                    'unit_detected': units['unit_detected'],
+                                                    'applied_multiplier': units['applied_multiplier']
                                                 }
             return None
         except Exception as e:
@@ -221,13 +357,19 @@ class RetainedEarningsExtractor:
                                 numeric_value = float(clean_value)
                                 # Filter out years and small numbers
                                 if numeric_value >= 10000 and numeric_value not in self.target_years:
+                                    # Try to locate actual page for the number and detect units
+                                    page_num = self._find_page_for_value(pdf_path, number)
+                                    units = self._detect_units_for_pdf(pdf_path, page_num=page_num, search_value=number)
+                                    scaled_value = numeric_value * units['applied_multiplier']
                                     return {
                                         'success': True,
                                         'value': number,
-                                        'numeric_value': numeric_value,
+                                        'numeric_value': scaled_value,
                                         'method': 'regex',
                                         'year': self.most_recent_year,
-                                        'page': 1
+                                        'page': page_num if page_num else 1,
+                                        'unit_detected': units['unit_detected'],
+                                        'applied_multiplier': units['applied_multiplier']
                                     }
             return None
         except Exception as e:
@@ -313,7 +455,17 @@ def main():
     results = []
     successful_extractions = 0
     
+    # Support graceful stop via flag file
+    stop_flag_file = os.environ.get("STOP_FLAG_FILE", str(Path("data/runtime/stop_pdfs_pipeline.flag").resolve()))
+
     for i, pdf_file in enumerate(pdf_files, 1):
+        try:
+            if os.path.exists(stop_flag_file):
+                print("🛑 Stop requested. Ending extraction loop early and saving partial results...")
+                break
+        except Exception:
+            # If any error reading stop flag, proceed safely
+            pass
         print(f"\n[{i}/{len(pdf_files)}] Processing: {pdf_file.name}")
         
         company_symbol = get_company_symbol_from_filename(pdf_file.name)
@@ -344,6 +496,16 @@ def main():
             print(f"  ✗ Error: {result.get('error', 'Unknown error')}")
         
         results.append(result)
+
+        # Persist partial results after each file so UI can finalize immediately on stop
+        try:
+            results_dir = Path("data/results")
+            results_dir.mkdir(parents=True, exist_ok=True)
+            output_file_tmp = results_dir / "retained_earnings_results.partial.json"
+            with open(output_file_tmp, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
     
     # Save results
     results_dir = Path("data/results")
@@ -365,6 +527,6 @@ def main():
     print(f"Success rate: {successful_extractions/len(pdf_files)*100:.1f}%")
     print(f"Results saved to: {output_file}")
     print(f"Results also saved to database: data/financial_analysis.db")
-
+    
 if __name__ == "__main__":
     main() 

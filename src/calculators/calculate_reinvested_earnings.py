@@ -137,6 +137,7 @@ def calculate_retained_earnings_flow(retained_data: List[Dict]) -> List[Dict]:
     
     return flow_results
 
+
 def main():
     """Main function to calculate retained earnings flow"""
     print("🔄 Calculating Retained Earnings Flow (Quarterly Changes)")
@@ -166,13 +167,22 @@ def main():
     # Convert to DataFrame for easier manipulation
     flow_df = pd.DataFrame(flow_results)
     
-    # Load ownership data for additional context
+    # Load ownership data for additional context (prefer JSON, fallback to CSV)
     try:
-        ownership_df = pd.read_csv('data/ownership/foreign_ownership_data.csv')
-        print(f"✅ Loaded ownership data for {len(ownership_df)} companies")
+        try:
+            with open('data/ownership/foreign_ownership_data.json', 'r', encoding='utf-8') as f:
+                ownership_json = json.load(f)
+            ownership_df = pd.DataFrame(ownership_json)
+            print(f"✅ Loaded ownership data (JSON) for {len(ownership_df)} companies")
+        except FileNotFoundError:
+            ownership_df = pd.read_csv('data/ownership/foreign_ownership_data.csv')
+            print(f"✅ Loaded ownership data (CSV) for {len(ownership_df)} companies")
+        
+        # Normalize columns
+        if 'symbol' not in ownership_df.columns and 'company_symbol' in ownership_df.columns:
+            ownership_df = ownership_df.rename(columns={'company_symbol': 'symbol'})
         
         # Merge with ownership data
-        # Ensure both keys are strings for merging
         flow_df['company_symbol'] = flow_df['company_symbol'].astype(str)
         ownership_df['symbol'] = ownership_df['symbol'].astype(str)
         
@@ -185,7 +195,6 @@ def main():
         )
         
         # Calculate reinvested earnings flow (foreign investor portion)
-        # تدفق الأرباح المبقاة للمستثمر الأجنبي = حجم الزيادة أو النقص في الأرباح المبقاة (التدفق) × ملكية المستثمر الاستراتيجي الأجنبي
         merged['reinvested_earnings_flow'] = merged.apply(
             lambda row: (
                 row['flow'] * (float(str(row['investor_limit']).replace('%', '')) / 100)
@@ -211,30 +220,48 @@ def main():
                 if symbol:
                     net_profit_lookup[symbol] = company
             
-            # Calculate net profit for foreign investor
-            # صافي الربح للمستثمر الأجنبي = صافي الربح × ملكية المستثمر الاستراتيجي الأجنبي
+            # Prepare raw net profit per quarter (None if missing)
+            def get_raw_net_profit(symbol: str, quarter: str, year: int):
+                company = net_profit_lookup.get(str(symbol), {})
+                qmap = company.get('quarterly_net_profit', {}) if company else {}
+                key = f"{quarter} {year}"
+                return qmap.get(key, None) if qmap else None
+
+            # Investor limit fraction
+            def investor_fraction(val):
+                if pd.isna(val):
+                    return 0.0
+                s = str(val).replace('%', '')
+                if not s.replace('.', '').isdigit():
+                    return 0.0
+                try:
+                    return float(s) / 100.0
+                except Exception:
+                    return 0.0
+
+            # Compute raw net profit and calc/display values
+            merged['__raw_net_profit'] = merged.apply(
+                lambda row: get_raw_net_profit(row['company_symbol'], row['quarter'], row['year']), axis=1
+            )
+            merged['__inv_frac'] = merged['investor_limit'].apply(investor_fraction)
+            # Numeric for calculations: use 0 when missing
+            merged['__net_profit_foreign_investor_calc'] = merged.apply(
+                lambda row: (
+                    (row['__raw_net_profit'] if row['__raw_net_profit'] is not None else 0) * row['__inv_frac']
+                ), axis=1
+            )
+            # Display column: empty string when raw net profit is missing
             merged['net_profit_foreign_investor'] = merged.apply(
                 lambda row: (
-                    net_profit_lookup.get(str(row['company_symbol']), {}).get('quarterly_net_profit', {}).get(f"{row['quarter']} {row['year']}", 0) * 
-                    (float(str(row['investor_limit']).replace('%', '')) / 100)
-                    if (str(row['company_symbol']) in net_profit_lookup and 
-                        pd.notna(row['investor_limit']) and 
-                        str(row['investor_limit']).replace('%', '').replace('.', '').isdigit() and
-                        float(str(row['investor_limit']).replace('%', '')) > 0)
-                    else 0
-                ), 
-                axis=1
+                    row['__net_profit_foreign_investor_calc'] if row['__raw_net_profit'] is not None else ''
+                ), axis=1
             )
-            
-            # Calculate distributed profits for foreign investor
-            # الأرباح الموزعة للمستثمر الأجنبي = صافي الربح للمستثمر الأجنبي - تدفق الأرباح المبقاة للمستثمر الأجنبي
+            # Calculate distributed using calc numeric regardless of display
             merged['distributed_profits_foreign_investor'] = merged.apply(
                 lambda row: (
-                    row['net_profit_foreign_investor'] - row['reinvested_earnings_flow']
-                    if (pd.notna(row['net_profit_foreign_investor']) and pd.notna(row['reinvested_earnings_flow']))
-                    else 0
-                ), 
-                axis=1
+                    row['__net_profit_foreign_investor_calc'] - row['reinvested_earnings_flow']
+                    if pd.notna(row['reinvested_earnings_flow']) else 0
+                ), axis=1
             )
             
             print(f"✅ Added net profit calculations for foreign investors")
@@ -263,6 +290,12 @@ def main():
         json_path = 'data/results/retained_earnings_flow.json'
         final_results.to_json(json_path, orient='records', force_ascii=False, indent=2)
         print(f"✅ Saved flow data to {json_path}")
+
+        # New: Save compact per-quarter foreign investor metrics
+        compact = final_results[['company_symbol','company_name','quarter','year','reinvested_earnings_flow','net_profit_foreign_investor','distributed_profits_foreign_investor']].copy()
+        compact_json_path = 'data/results/foreign_investor_results.json'
+        compact.to_json(compact_json_path, orient='records', force_ascii=False, indent=2)
+        print(f"✅ Saved foreign investor metrics to {compact_json_path}")
         
         # Display sample results
         print("\n📊 Sample Flow Results:")
