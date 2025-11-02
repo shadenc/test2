@@ -8,10 +8,10 @@ python start_system.py
 ```
 
 ### Deploy to Production (FREE!)
-See deployment guides:
-- **START HERE**: `START_HERE.md` - Quick overview and next steps
-- **Full Instructions**: `FINAL_DEPLOY_INSTRUCTIONS.md` - Step-by-step guide
-- **Understanding Options**: `HONEST_DEPLOYMENT_GUIDE.md` - All hosting options explained
+**Your repo is ready!** Follow:
+- **🚀 QUICK START**: `YOUR_REPO_DEPLOY.md` - Deploy in 20 minutes (recommended!)
+- **📖 Detailed**: `FINAL_DEPLOY_INSTRUCTIONS.md` - Full step-by-step guide
+- **💡 Learn More**: `HONEST_DEPLOYMENT_GUIDE.md` - All hosting options explained
 
 ## Project Overview
 
