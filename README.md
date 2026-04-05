@@ -1,69 +1,53 @@
-# Foreign Investment Analysis System
+# Foreign Investment Tracker
 
-## Quick Start
+Analysis pipeline and dashboard for foreign investment flows in Saudi-listed companies (Tadawul), using quarterly financials, ownership data, and evidence screenshots.
 
-### Local Development
+## Quick start (local)
+
 ```bash
+pip install -r requirements.txt
 python start_system.py
 ```
 
-### Deploy to Production (FREE!)
-**Your repo is ready!** Follow:
-- **🚀 QUICK START**: `YOUR_REPO_DEPLOY.md` - Deploy in 20 minutes (recommended!)
-- **📖 Detailed**: `FINAL_DEPLOY_INSTRUCTIONS.md` - Full step-by-step guide
-- **💡 Learn More**: `HONEST_DEPLOYMENT_GUIDE.md` - All hosting options explained
+Backend API only:
 
-## Project Overview
+```bash
+python src/api/evidence_api.py
+```
 
-This system tracks foreign investment flows in Saudi stock market companies by analyzing quarterly financial statements.
+Frontend (from `frontend/`):
 
-**Tech Stack:**
-- Backend: Python Flask + Playwright
-- Frontend: React + Material-UI
-- Data: JSON, CSV, SQLite
+```bash
+npm install
+npm start
+```
 
-**Features:**
-- Foreign ownership data scraping from Tadawul
-- Quarterly financial PDF downloads
-- Retained earnings extraction with evidence screenshots
-- Net profit data collection
-- Financial flow calculations
-- Excel exports with Arabic RTL support
-- Background job processing
-- Real-time progress tracking
+Set `REACT_APP_API_URL` if the API is not at `http://localhost:5003`.
 
-## File Structure
+## Configuration
+
+- **OpenAI (extractor):** set `OPENAI_API_KEY` in the environment or in a project-root `.env` file (never commit `.env`).
+- **API CORS (production):** set `ALLOWED_ORIGINS` to your frontend origin(s).
+- **Playwright:** install browsers when needed, e.g. `playwright install chromium`.
+
+## Layout
 
 ```
-├── src/
-│   ├── api/              # Flask backend API
-│   ├── scrapers/         # Web scrapers (ownership, PDFs, net profit)
-│   ├── extractors/       # PDF data extraction
-│   ├── calculators/      # Financial calculations
-│   └── utils/            # Utilities (Excel export, screenshots)
-├── frontend/             # React frontend
-├── data/                 # Data storage (PDFs, results, ownership)
-├── output/               # Generated files (screenshots, exports, archives)
-├── requirements.txt      # Python dependencies
-├── Procfile              # Production deployment config
-└── runtime.txt           # Python version
+src/
+  api/           Flask evidence API
+  scrapers/      Ownership, PDFs, quarterly data
+  extractors/    PDF retained earnings extraction
+  calculators/   Reinvested earnings logic
+  utils/         Excel export, screenshots
+frontend/        React + Material UI
+data/            Inputs and generated results (large assets gitignored as configured)
+output/          Screenshots and exports
 ```
+
+## Deploy (summary)
+
+Typical free setup: Python backend on **Render** (or similar) with `gunicorn` per `Procfile`, React app on **Vercel** with root directory `frontend` and `REACT_APP_API_URL` pointing at the API. Set `ALLOWED_ORIGINS` on the backend to match the frontend URL.
 
 ## Requirements
 
-- Python 3.12+
-- Node.js 14+
-- Playwright browser automation
-- Internet connection for data scraping
-
-## Deployment Options
-
-### FREE Options:
-1. **Render Free + Vercel Free** ($0/month) - May sleep
-2. **Fly.io Free + Vercel Free** ($0/month) - May sleep  
-3. **VPS** (~$4-6/month) - Always on, more control
-
-### Recommended:
-**Render + Vercel** ($0/month), absolutely free!
-
-See deployment guides for setup instructions.
+Python 3.12+, Node.js 18+ recommended, network access for scraping.
