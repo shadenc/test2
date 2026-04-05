@@ -1009,9 +1009,6 @@ function App() {
   // Background jobs state
   const [pdfJobStatus, setPdfJobStatus] = useState({ status: 'idle' });
   const [netJobStatus, setNetJobStatus] = useState({ status: 'idle' });
-  // Busy flags: only setters are used (passed to UpdateJobsDialog).
-  const setIsPdfRunning = useState(false)[1];
-  const setIsNetRunning = useState(false)[1];
   const [pdfPollId, setPdfPollId] = useState(null);
   const [netPollId, setNetPollId] = useState(null);
   const [pdfProgressOpen, setPdfProgressOpen] = useState(false);
@@ -1052,7 +1049,6 @@ function App() {
         if (data.status === 'completed' || data.status === 'idle') {
           clearInterval(id);
           setPdfPollId(null);
-          setIsPdfRunning(false);
           setPdfProgressOpen(false);
           // Trigger dashboard data reload (ensure backend has flushed files)
           setTimeout(() => {
@@ -1081,7 +1077,6 @@ function App() {
         if (data.status === 'completed' || data.status === 'idle') {
           clearInterval(id);
           setNetPollId(null);
-          setIsNetRunning(false);
           setNetProgressOpen(false);
           // Trigger dashboard data reload (ensure backend has flushed files)
           setTimeout(() => {
@@ -1669,10 +1664,8 @@ function App() {
               setSelectNet={setSelectNet}
               startPollPdf={startPollPdf}
               startPollNet={startPollNet}
-              setIsPdfRunning={setIsPdfRunning}
               setPdfJobStatus={setPdfJobStatus}
               setPdfProgressOpen={setPdfProgressOpen}
-              setIsNetRunning={setIsNetRunning}
               setNetJobStatus={setNetJobStatus}
               setNetProgressOpen={setNetProgressOpen}
               setBothProgressOpen={setBothProgressOpen}

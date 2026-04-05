@@ -19,7 +19,6 @@ async function postJson(url) {
 async function startPdfOnlyPipeline(apiUrl, actions) {
   const { res, data } = await postJson(`${apiUrl}/api/run_pdfs_pipeline`);
   if (res.status === 202) {
-    actions.setIsPdfRunning(true);
     actions.setPdfJobStatus({ status: "running" });
     actions.setPdfProgressOpen(true);
     actions.startPollPdf();
@@ -31,7 +30,6 @@ async function startPdfOnlyPipeline(apiUrl, actions) {
 async function startNetOnlyPipeline(apiUrl, actions) {
   const { res, data } = await postJson(`${apiUrl}/api/run_net_profit_scrape`);
   if (res.status === 202) {
-    actions.setIsNetRunning(true);
     actions.setNetJobStatus({ status: "running" });
     actions.setNetProgressOpen(true);
     actions.startPollNet();
@@ -92,10 +90,8 @@ export function UpdateJobsDialog({
   setSelectNet,
   startPollPdf,
   startPollNet,
-  setIsPdfRunning,
   setPdfJobStatus,
   setPdfProgressOpen,
-  setIsNetRunning,
   setNetJobStatus,
   setNetProgressOpen,
   setBothProgressOpen,
@@ -105,11 +101,9 @@ export function UpdateJobsDialog({
   bothNetRunning,
 }) {
   const actions = {
-    setIsPdfRunning,
     setPdfJobStatus,
     setPdfProgressOpen,
     startPollPdf,
-    setIsNetRunning,
     setNetJobStatus,
     setNetProgressOpen,
     startPollNet,
@@ -202,10 +196,8 @@ UpdateJobsDialog.propTypes = {
   setSelectNet: PropTypes.func.isRequired,
   startPollPdf: PropTypes.func.isRequired,
   startPollNet: PropTypes.func.isRequired,
-  setIsPdfRunning: PropTypes.func.isRequired,
   setPdfJobStatus: PropTypes.func.isRequired,
   setPdfProgressOpen: PropTypes.func.isRequired,
-  setIsNetRunning: PropTypes.func.isRequired,
   setNetJobStatus: PropTypes.func.isRequired,
   setNetProgressOpen: PropTypes.func.isRequired,
   setBothProgressOpen: PropTypes.func.isRequired,
