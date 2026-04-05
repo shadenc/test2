@@ -40,6 +40,17 @@ MSG_INTERNAL_ERROR = "Internal server error"
 MSG_FILE_NOT_FOUND = "File not found"
 MSG_OWNERSHIP_UPDATED_OK = "Ownership data updated successfully"
 MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+# Arabic "none" — single literal for Sonar; matches frontend GRID_EMPTY_AR
+EMPTY_DISPLAY_AR = "لايوجد"
+
+
+def format_excel_cell_display(value):
+    """Empty / missing → EMPTY_DISPLAY_AR; numeric zero → '0'; else pass-through."""
+    if value == "" or value is None:
+        return EMPTY_DISPLAY_AR
+    if value == 0 or (isinstance(value, str) and value.strip() == "0"):
+        return "0"
+    return value
 
 
 def run_quarterly_refresh_and_archive(project_root: Path) -> None:
@@ -155,7 +166,7 @@ def run_quarterly_refresh_and_archive(project_root: Path) -> None:
 
             quarter_data = flow_info.get(current_quarter, {})
 
-            net_profit_value = "لايوجد"
+            net_profit_value = EMPTY_DISPLAY_AR
             if net_profit_info and "quarterly_net_profit" in net_profit_info:
                 quarter_key = f"{current_quarter} {current_year}"
                 if quarter_key in net_profit_info["quarterly_net_profit"]:
@@ -168,36 +179,29 @@ def run_quarterly_refresh_and_archive(project_root: Path) -> None:
 
             current_quarter_header = f"{current_year}{current_quarter}"
 
-            def format_value(value):
-                if value == "" or value is None:
-                    return "لايوجد"
-                if value == 0 or (isinstance(value, str) and value.strip() == "0"):
-                    return "0"
-                return value
-
             merged_row = {
                 "رمز الشركة": symbol,
                 "الشركة": ownership_row.get("company_name", ""),
                 "ملكية جميع المستثمرين الأجانب": ownership_row.get("foreign_ownership", ""),
                 "الملكية الحالية": ownership_row.get("max_allowed", ""),
                 "ملكية المستثمر الاستراتيجي الأجنبي": ownership_row.get("investor_limit", ""),
-                f"الأرباح المبقاة للربع السابق ({previous_quarter_header})": format_value(
+                f"الأرباح المبقاة للربع السابق ({previous_quarter_header})": format_excel_cell_display(
                     quarter_data.get("previous_value", "")
                 ),
-                f"الأرباح المبقاة للربع الحالي ({current_quarter_header})": format_value(
+                f"الأرباح المبقاة للربع الحالي ({current_quarter_header})": format_excel_cell_display(
                     quarter_data.get("current_value", "")
                 ),
-                "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)": format_value(
+                "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)": format_excel_cell_display(
                     quarter_data.get("flow", "")
                 ),
-                "تدفق الأرباح المبقاة للمستثمر الأجنبي": format_value(
+                "تدفق الأرباح المبقاة للمستثمر الأجنبي": format_excel_cell_display(
                     quarter_data.get("reinvested_earnings_flow", "")
                 ),
                 "صافي الربح": net_profit_value,
-                "صافي الربح للمستثمر الأجنبي": format_value(
+                "صافي الربح للمستثمر الأجنبي": format_excel_cell_display(
                     quarter_data.get("net_profit_foreign_investor", "")
                 ),
-                "الأرباح الموزعة للمستثمر الأجنبي": format_value(
+                "الأرباح الموزعة للمستثمر الأجنبي": format_excel_cell_display(
                     quarter_data.get("distributed_profits_foreign_investor", "")
                 ),
             }
@@ -1223,7 +1227,7 @@ def create_app():
                 quarter_data = flow_info.get(quarter_filter, {})
                 
                 # Get net profit for this quarter
-                net_profit_value = "لايوجد"
+                net_profit_value = EMPTY_DISPLAY_AR
                 if net_profit_info and 'quarterly_net_profit' in net_profit_info:
                     quarter_key = f"{quarter_filter} 2025"
                     if quarter_key in net_profit_info['quarterly_net_profit']:
@@ -1262,28 +1266,19 @@ def create_app():
                 elif quarter_filter == "Q4":
                     evidence_note = "Note: Previous quarter (2025Q3) refers to Q3 2025 statement screenshot"
                 
-                # Handle values properly - show 0 instead of "لايوجد" when it's actually 0
-                def format_value(value):
-                    if value == '' or value is None:
-                        return 'لايوجد'
-                    elif value == 0 or (isinstance(value, str) and value.strip() == '0'):
-                        return '0'
-                    else:
-                        return value
-                
                 merged_row = {
                     'رمز الشركة': symbol,
                     'الشركة': ownership_row.get('company_name', ''),
                     'ملكية جميع المستثمرين الأجانب': ownership_row.get('foreign_ownership', ''),
                     'الملكية الحالية': ownership_row.get('max_allowed', ''),
                     'ملكية المستثمر الاستراتيجي الأجنبي': ownership_row.get('investor_limit', ''),
-                    f'الأرباح المبقاة للربع السابق ({previous_quarter})': format_value(quarter_data.get('previous_value', '')),
-                    f'الأرباح المبقاة للربع الحالي ({current_quarter})': format_value(quarter_data.get('current_value', '')),
-                    'حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)': format_value(quarter_data.get('flow', '')),
-                    'تدفق الأرباح المبقاة للمستثمر الأجنبي': format_value(quarter_data.get('reinvested_earnings_flow', '')),
+                    f'الأرباح المبقاة للربع السابق ({previous_quarter})': format_excel_cell_display(quarter_data.get('previous_value', '')),
+                    f'الأرباح المبقاة للربع الحالي ({current_quarter})': format_excel_cell_display(quarter_data.get('current_value', '')),
+                    'حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)': format_excel_cell_display(quarter_data.get('flow', '')),
+                    'تدفق الأرباح المبقاة للمستثمر الأجنبي': format_excel_cell_display(quarter_data.get('reinvested_earnings_flow', '')),
                     'صافي الربح': net_profit_value,
-                    'صافي الربح للمستثمر الأجنبي': format_value(quarter_data.get('net_profit_foreign_investor', '')),
-                    'الأرباح الموزعة للمستثمر الأجنبي': format_value(quarter_data.get('distributed_profits_foreign_investor', ''))
+                    'صافي الربح للمستثمر الأجنبي': format_excel_cell_display(quarter_data.get('net_profit_foreign_investor', '')),
+                    'الأرباح الموزعة للمستثمر الأجنبي': format_excel_cell_display(quarter_data.get('distributed_profits_foreign_investor', ''))
                 }
                 merged_data.append(merged_row)
             

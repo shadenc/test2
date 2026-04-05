@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import PropTypes from "prop-types";
 import { DataGrid } from "@mui/x-data-grid";
 import Box from "@mui/material/Box";
 import TextField from "@mui/material/TextField";
@@ -10,7 +11,6 @@ import Modal from "@mui/material/Modal";
 import Fade from "@mui/material/Fade";
 import IconButton from "@mui/material/IconButton";
 import CloseIcon from "@mui/icons-material/Close";
-import VisibilityIcon from "@mui/icons-material/Visibility";
 import CircularProgress from "@mui/material/CircularProgress";
 import Alert from "@mui/material/Alert";
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
@@ -26,7 +26,6 @@ import Button from '@mui/material/Button';
 import Drawer from '@mui/material/Drawer';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
-import Collapse from '@mui/material/Collapse';
 import MenuIcon from '@mui/icons-material/Menu';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
@@ -34,35 +33,41 @@ import MenuItem from '@mui/material/MenuItem';
 import EditIcon from '@mui/icons-material/Edit';
 import Add from '@mui/icons-material/Add';
 import LinearProgress from '@mui/material/LinearProgress';
+import Stack from "@mui/material/Stack";
+import { buildDashboardColumns, GRID_EMPTY_AR } from "./dashboardColumns";
+import { mergeCorrectionIntoRows, quarterLabelFromDateString } from "./gridUtils";
 
 // API URL configuration - supports both localhost and production
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5003';
 
-/** Parse retained-earnings flow CSV; extracted to limit callback nesting (Sonar). */
+function cleanFlowCsvRow(row) {
+  const cleanedRow = {};
+  Object.keys(row).forEach((key) => {
+    const cleanKey = key.trim();
+    cleanedRow[cleanKey] = row[key] ? row[key].trim() : "";
+  });
+  return cleanedRow;
+}
+
+function cleanedRowsFromPapaResult(result) {
+  console.log("CSV parsing result:", result);
+  if (!result.data || result.data.length === 0) {
+    console.log("No CSV data found");
+    return [];
+  }
+  const cleanedData = result.data
+    .filter((row) => row.company_symbol && row.company_symbol.trim() !== "")
+    .map(cleanFlowCsvRow);
+  console.log("Cleaned CSV data:", cleanedData);
+  return cleanedData;
+}
+
+/** Parse retained-earnings flow CSV; shallow callbacks only (Sonar nesting). */
 function parseQuarterlyFlowCsvText(csvText) {
   return new Promise((resolve) => {
     Papa.parse(csvText, {
       header: true,
-      complete: (result) => {
-        console.log("CSV parsing result:", result);
-        if (result.data && result.data.length > 0) {
-          const cleanedData = result.data
-            .filter((row) => row.company_symbol && row.company_symbol.trim() !== '')
-            .map((row) => {
-              const cleanedRow = {};
-              Object.keys(row).forEach((key) => {
-                const cleanKey = key.trim();
-                cleanedRow[cleanKey] = row[key] ? row[key].trim() : '';
-              });
-              return cleanedRow;
-            });
-          console.log("Cleaned CSV data:", cleanedData);
-          resolve(cleanedData);
-        } else {
-          console.log("No CSV data found");
-          resolve([]);
-        }
-      },
+      complete: (result) => resolve(cleanedRowsFromPapaResult(result)),
       error: (error) => {
         console.error("Error parsing CSV data:", error);
         resolve([]);
@@ -73,11 +78,60 @@ function parseQuarterlyFlowCsvText(csvText) {
 
 const QUARTERS_Q1_Q4 = ['Q1', 'Q2', 'Q3', 'Q4'];
 
+function messageForCustomExportFailure(error) {
+  const msg = error?.message ?? "";
+  if (msg.includes("404")) {
+    return "🔍 السبب: لم يتم العثور على البيانات المطلوبة\n💡 الحل: تأكد من وجود البيانات للربع المحدد";
+  }
+  if (msg.includes("500")) {
+    return "🔧 السبب: خطأ في الخادم\n💡 الحل: حاول مرة أخرى أو اتصل بالدعم الفني";
+  }
+  if (msg.includes("fetch")) {
+    return "🌐 السبب: مشكلة في الاتصال\n💡 الحل: تأكد من تشغيل الخادم";
+  }
+  return `🔍 السبب: ${msg}\n💡 الحل: حاول مرة أخرى`;
+}
+
+const DATA_GRID_COMPONENTS_PROPS = {
+  toolbar: {
+    showQuickFilter: true,
+    quickFilterProps: { debounceMs: 500 },
+  },
+};
+
+/** Single-line caption for PDF / net job progress modals (no nested JSX ternaries). */
+function jobPipelineProgressCaption(jobStatus) {
+  const status = jobStatus?.status ?? "جاري التنفيذ";
+  const processed = jobStatus?.processed ?? 0;
+  const sym = jobStatus?.current_symbol;
+  const suffix = sym ? ` — الحالي: ${sym}` : "";
+  return `الحالة: ${status} — المُنجز: ${processed}${suffix}`;
+}
+
+function combinedPipelineLine(label, jobStatus) {
+  const status = jobStatus?.status ?? "جاري التنفيذ";
+  const sym = jobStatus?.current_symbol;
+  const tail = sym ? ` — ${sym}` : "";
+  return `${label}: ${status}${tail}`;
+}
+
+function stopBothJobsButtonSx(stopping) {
+  if (stopping) {
+    return { color: "#999", borderColor: "#ccc" };
+  }
+  return { color: "#b71c1c", borderColor: "#b71c1c" };
+}
+
+function filenameFromContentDispositionHeader(contentDisposition, fallback = "dashboard_table.xlsx") {
+  const m = contentDisposition?.match(/filename="(.+)"/);
+  return m ? m[1] : fallback;
+}
+
 function buildFlowMapFromQuarterlyRows(quarterlyFlowData) {
   const flowMap = {};
   quarterlyFlowData.forEach((row) => {
-    const symbol = row.company_symbol ? row.company_symbol.toString().trim() : '';
-    const quarter = row.quarter ? row.quarter.toString().trim() : '';
+    const symbol = row.company_symbol?.toString().trim() ?? "";
+    const quarter = row.quarter?.toString().trim() ?? "";
     if (!symbol || !quarter) {
       return;
     }
@@ -106,7 +160,7 @@ function buildFlowMapFromQuarterlyRows(quarterlyFlowData) {
 function mergeOwnershipWithQuarterlyFlow(foreignOwnershipData, flowMap, onEvidenceClick) {
   const mergedData = [];
   foreignOwnershipData.forEach((row, idx) => {
-    const symbol = row.symbol ? row.symbol.toString().trim() : '';
+    const symbol = row.symbol?.toString().trim() ?? "";
     const flowData = flowMap[symbol] || {};
     QUARTERS_Q1_Q4.forEach((quarter) => {
       const quarterData = flowData[quarter] || {};
@@ -140,13 +194,26 @@ function mergeOwnershipWithQuarterlyFlow(foreignOwnershipData, flowMap, onEviden
   return mergedData;
 }
 
+function arabicUnitLabelForUnit(unit) {
+  if (unit === "million_SAR") return "بالملايين";
+  if (unit === "thousand_SAR") return "بالآلاف";
+  if (unit === "SAR") return "بالريال السعودي";
+  return "غير محدد";
+}
+
+function directSarOrUnitCaption(unit, mult, unitLabel) {
+  if (unit === "SAR" || mult === 1) {
+    return "القيم بالريال السعودي مباشرة (بدون تحويل).";
+  }
+  return `الوحدة: ${unitLabel}`;
+}
+
 // Evidence Modal Component
 const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpdate }) => {
   const [verifyMode, setVerifyMode] = useState(null); // null | 'confirm' | 'incorrect'
   const [correctionValue, setCorrectionValue] = useState("");
   const [correctionFeedback, setCorrectionFeedback] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [updateSuccess, setUpdateSuccess] = useState(false);
 
   return (
     <Modal
@@ -194,10 +261,10 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
           </Alert>
         )}
 
-        {evidenceData && !loading && (
+        {!loading && evidenceData && (
           <>
             {/* Screenshot */}
-            {evidenceData.evidence && evidenceData.evidence.has_evidence && (
+            {evidenceData?.evidence?.has_evidence && (
               <Box sx={{ mb: 4 }}>
                 <Box sx={{ 
                   display: 'flex', 
@@ -241,15 +308,15 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                 {/* Scaling explanation */}
                 <Box sx={{ mt: 1.5, p: 1.5, bgcolor: '#f7f9f8', border: '1px solid #e0e6e4', borderRadius: 1.5 }}>
                   {(() => {
-                    const rawStr = String(evidenceData.value || '').replace(/[^0-9,.-]/g, '');
-                    const raw = Number(rawStr.replace(/,/g, ''));
-                    const mult = Number(evidenceData.applied_multiplier || 1);
-                    const unit = String(evidenceData.unit_detected || 'SAR');
-                    const unitLabel = unit === 'million_SAR' ? 'بالملايين' : unit === 'thousand_SAR' ? 'بالآلاف' : unit === 'SAR' ? 'بالريال السعودي' : 'غير محدد';
+                    const rawStr = String(evidenceData.value ?? "").replace(/[^0-9,.-]/g, "");
+                    const raw = Number(rawStr.replace(/,/g, ""));
+                    const mult = Number(evidenceData.applied_multiplier ?? 1);
+                    const unit = String(evidenceData.unit_detected ?? "SAR");
+                    const unitLabel = arabicUnitLabelForUnit(unit);
                     if (!raw || mult === 1) {
                       return (
                         <Typography variant="body2" sx={{ color: '#4d4d4d' }}>
-                          {unit === 'SAR' || mult === 1 ? 'القيم بالريال السعودي مباشرة (بدون تحويل).' : `الوحدة: ${unitLabel}`}
+                          {directSarOrUnitCaption(unit, mult, unitLabel)}
                         </Typography>
                       );
                     }
@@ -260,7 +327,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                           تم اكتشاف أن القيم {unitLabel}. تم تحويل القيمة كما يلي:
                         </Typography>
                         <Typography variant="body2" sx={{ mt: 0.5, direction: 'ltr', fontFamily: 'monospace', color: '#1e6641' }}>
-                          {raw.toLocaleString('en-US')} × {mult.toLocaleString('en-US')} = {result.toLocaleString('en-US')}
+                          {raw.toLocaleString("en-US")} × {mult.toLocaleString("en-US")} = {result.toLocaleString("en-US")}
                         </Typography>
                       </>
                     );
@@ -287,15 +354,6 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
               </Box>
             )}
 
-            {/* Success Message */}
-            {updateSuccess && (
-              <Box sx={{ mb: 3 }}>
-                <Alert severity="success" sx={{ borderRadius: 2 }}>
-                  تم تحديث القيمة بنجاح! سيتم تحديث البيانات في الجدول الرئيسي.
-                </Alert>
-              </Box>
-            )}
-
             {/* Raw Text Context */}
             {evidenceData.context && (
               <Box>
@@ -317,7 +375,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                 </Box>
               </Box>
             )}
-            {evidenceData && evidenceData.context && !loading && (
+            {evidenceData?.context && !loading && (
               <Box sx={{ mt: 2, textAlign: 'left' }}>
                 <Tooltip title="تعديل النتيجة" arrow>
                   <IconButton
@@ -396,6 +454,37 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
   );
 };
 
+const evidenceModalEvidencePropShape = PropTypes.shape({
+  has_evidence: PropTypes.bool,
+  requested_quarter: PropTypes.string,
+});
+
+EvidenceModal.propTypes = {
+  open: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+  evidenceData: PropTypes.shape({
+    company_symbol: PropTypes.string,
+    symbol: PropTypes.string,
+    evidence: evidenceModalEvidencePropShape,
+    numeric_value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    applied_multiplier: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+    unit_detected: PropTypes.string,
+    extraction_method: PropTypes.string,
+    context: PropTypes.string,
+  }),
+  loading: PropTypes.bool,
+  error: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
+  onDataUpdate: PropTypes.func,
+};
+
+EvidenceModal.defaultProps = {
+  evidenceData: null,
+  loading: false,
+  error: null,
+  onDataUpdate: undefined,
+};
+
 // Edit Value Modal Component
 const EditValueModal = ({ open, onClose, editData, onSave, loading }) => {
   const [newValue, setNewValue] = useState("");
@@ -403,8 +492,8 @@ const EditValueModal = ({ open, onClose, editData, onSave, loading }) => {
 
   // Update local state when editData changes
   useEffect(() => {
-    if (editData) {
-      setNewValue(editData.currentValue.toString());
+    if (editData?.currentValue != null) {
+      setNewValue(String(editData.currentValue));
       setFeedback("");
     }
   }, [editData]);
@@ -414,7 +503,13 @@ const EditValueModal = ({ open, onClose, editData, onSave, loading }) => {
       alert("يرجى إدخال قيمة صحيحة");
       return;
     }
-    onSave(editData.companySymbol, editData.fieldType, parseFloat(newValue), feedback);
+    if (!editData) return;
+    onSave(
+      editData.companySymbol,
+      editData.fieldType,
+      Number.parseFloat(newValue),
+      feedback,
+    );
   };
 
   const getFieldDisplayName = (fieldType) => {
@@ -546,8 +641,28 @@ const EditValueModal = ({ open, onClose, editData, onSave, loading }) => {
   );
 };
 
+const editValueModalDataShape = PropTypes.shape({
+  currentValue: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  companySymbol: PropTypes.string,
+  fieldType: PropTypes.string,
+  companyName: PropTypes.string,
+});
+
+EditValueModal.propTypes = {
+  open: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+  editData: editValueModalDataShape,
+  onSave: PropTypes.func.isRequired,
+  loading: PropTypes.bool,
+};
+
+EditValueModal.defaultProps = {
+  editData: null,
+  loading: false,
+};
+
 // Inline Editable Cell Component
-const InlineEditableCell = ({ value, onSave, fieldType, companySymbol, companyName, initialValue }) => {
+const InlineEditableCell = ({ value, onSave, fieldType, companySymbol, companyName }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(value?.toString() || "");
   const [saving, setSaving] = useState(false);
@@ -568,14 +683,14 @@ const InlineEditableCell = ({ value, onSave, fieldType, companySymbol, companyNa
         body: JSON.stringify({
           company_symbol: companySymbol,
           field_type: fieldType,
-          new_value: parseFloat(editValue),
+          new_value: Number.parseFloat(editValue),
           feedback: 'Inline edit'
         }),
       });
       
       const data = await response.json();
       if (data.status === 'success') {
-        onSave(parseFloat(editValue));
+        onSave(Number.parseFloat(editValue));
         setIsEditing(false);
       } else {
         alert('فشل في حفظ التصحيح: ' + (data.message || ''));
@@ -645,7 +760,7 @@ const InlineEditableCell = ({ value, onSave, fieldType, companySymbol, companyNa
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-      <Typography>{value?.toLocaleString('en-US') || 'لايوجد'}</Typography>
+      <Typography>{value?.toLocaleString("en-US") || GRID_EMPTY_AR}</Typography>
       <Tooltip title="هل تحتاج لتغيير هذه القيمة؟ انقر هنا للتعديل" arrow placement="top">
         <IconButton 
           size="small" 
@@ -663,6 +778,19 @@ const InlineEditableCell = ({ value, onSave, fieldType, companySymbol, companyNa
   );
 };
 
+InlineEditableCell.propTypes = {
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  onSave: PropTypes.func.isRequired,
+  fieldType: PropTypes.string.isRequired,
+  companySymbol: PropTypes.string.isRequired,
+  companyName: PropTypes.string,
+};
+
+InlineEditableCell.defaultProps = {
+  value: null,
+  companyName: "",
+};
+
 function App() {
   const [rows, setRows] = useState([]);
   const [search, setSearch] = useState("");
@@ -676,36 +804,28 @@ function App() {
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const [snapshotsError, setSnapshotsError] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [snapshotsExpanded, setSnapshotsExpanded] = useState(false);
   const [userExports, setUserExports] = useState([]);
   const [userExportsLoading, setUserExportsLoading] = useState(false);
   const [userExportsError, setUserExportsError] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState(null);
   const [netProfitData, setNetProfitData] = useState({});
-  // Commented out since we're using inline editing
-  // const [editModalOpen, setEditModalOpen] = useState(false);
-  // const [editData, setEditData] = useState(null);
-  // const [editLoading, setEditLoading] = useState(false);
   const [customExportDate, setCustomExportDate] = useState("");
   const [customFileName, setCustomFileName] = useState("");
   const [customExportExpanded, setCustomExportExpanded] = useState(false);
   // Background jobs state
   const [pdfJobStatus, setPdfJobStatus] = useState({ status: 'idle' });
   const [netJobStatus, setNetJobStatus] = useState({ status: 'idle' });
-  const [isPdfRunning, setIsPdfRunning] = useState(false);
-  const [isNetRunning, setIsNetRunning] = useState(false);
+  const [, setIsPdfRunning] = useState(false);
+  const [, setIsNetRunning] = useState(false);
   const [pdfPollId, setPdfPollId] = useState(null);
   const [netPollId, setNetPollId] = useState(null);
   const [pdfProgressOpen, setPdfProgressOpen] = useState(false);
   const [netProgressOpen, setNetProgressOpen] = useState(false);
-  const [pdfPhase, setPdfPhase] = useState('running'); // 'running' | 'finalizing'
-  const [netPhase, setNetPhase] = useState('running'); // 'running' | 'finalizing'
   // Unified update modal state
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [selectPdf, setSelectPdf] = useState(false);
   const [selectNet, setSelectNet] = useState(false);
-  const [chainNetAfterPdf, setChainNetAfterPdf] = useState(false); // kept for compatibility but unused when running both in parallel
   // Combined progress modal when running both
   const [bothProgressOpen, setBothProgressOpen] = useState(false);
   const [bothPdfRunning, setBothPdfRunning] = useState(false);
@@ -773,38 +893,39 @@ function App() {
     };
   }, [pdfPollId, netPollId]);
 
-  // Function to fetch evidence data
-  const fetchEvidenceData = async (companySymbol, quarter) => {
+  const fetchEvidenceData = useCallback(async (companySymbol, quarter) => {
     console.log(`Fetching evidence for ${companySymbol} quarter ${quarter}`);
+    setEvidenceLoading(true);
+    setEvidenceError(null);
+    setEvidenceData(null);
+    setEvidenceModalOpen(true);
     try {
       const response = await fetch(`${API_URL}/api/extractions/${companySymbol}?quarter=${quarter}`);
       if (response.ok) {
         const data = await response.json();
-        console.log('Evidence data received:', data);
-        console.log('Evidence quarter requested:', quarter);
-        console.log('Evidence quarter in response:', data.evidence?.requested_quarter);
-        console.log('Screenshot path:', data.evidence?.screenshot_path);
+        console.log("Evidence data received:", data);
         setEvidenceData(data);
-        setEvidenceModalOpen(true);
       } else {
-        console.error('Failed to fetch evidence data');
+        console.error("Failed to fetch evidence data");
+        setEvidenceError("فشل تحميل الدليل");
       }
     } catch (error) {
-      console.error('Error fetching evidence data:', error);
+      console.error("Error fetching evidence data:", error);
+      setEvidenceError(error?.message ?? "حدث خطأ أثناء التحميل");
+    } finally {
+      setEvidenceLoading(false);
     }
-  };
+  }, []);
 
-  // Function to handle edit value button click - Commented out since we're using inline editing
-  /* const handleEditValue = (companySymbol, fieldType, currentValue, companyName) => {
-    setEditData({
-      companySymbol,
-      fieldType,
-      currentValue,
-      companyName,
-      newValue: currentValue.toString()
-    });
-    setEditModalOpen(true);
-  }; */
+  const dashboardColumns = useMemo(
+    () =>
+      buildDashboardColumns({
+        quarterFilter,
+        netProfitData,
+        fetchEvidenceData,
+      }),
+    [quarterFilter, netProfitData, fetchEvidenceData],
+  );
 
   // Function to fetch net profit data
   const fetchNetProfitData = async () => {
@@ -823,8 +944,7 @@ function App() {
 
   // Function to handle evidence button click
   const handleEvidenceClick = (row) => {
-    if (row.current_quarter_value && row.current_quarter_value !== "لايوجد") {
-      setEvidenceModalOpen(true);
+    if (row.current_quarter_value && row.current_quarter_value !== GRID_EMPTY_AR) {
       fetchEvidenceData(row.symbol, row.quarter);
     }
   };
@@ -859,16 +979,10 @@ function App() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
-      // Get the filename from the response headers
-      const contentDisposition = response.headers.get('content-disposition');
-      let filename = 'dashboard_table.xlsx';
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
-      
+      const filename = filenameFromContentDispositionHeader(
+        response.headers.get("content-disposition"),
+      );
+
       // Create blob and download
       const blob = await response.blob();
       const url = globalThis.URL.createObjectURL(blob);
@@ -997,290 +1111,6 @@ function App() {
       });
   }, []);
 
-  // Function to fetch snapshots (for refreshing after quarterly archive)
-  const fetchSnapshots = () => {
-    console.log('🔄 Manual fetchSnapshots called...');
-    setSnapshotsLoading(true);
-    fetch(`${API_URL}/api/ownership_snapshots`)
-      .then(res => {
-        console.log('📡 Manual snapshots response status:', res.status);
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        return res.json();
-      })
-      .then(data => {
-        console.log('✅ Manual snapshots data received:', data);
-        setSnapshots(data);
-        setSnapshotsLoading(false);
-      })
-      .catch(err => {
-        console.error('❌ Error in manual fetchSnapshots:', err);
-        setSnapshotsError('فشل في تحميل ملفات الفترات السابقة');
-        setSnapshotsLoading(false);
-      });
-  };
-
-  // Helper function to determine quarter from date
-  const getQuarterFromDate = (dateString) => {
-    if (!dateString) return '';
-    
-    try {
-      const date = new Date(dateString);
-      const month = date.getMonth() + 1; // getMonth() returns 0-11
-      const year = date.getFullYear();
-      
-      if (month >= 1 && month <= 3) return `Q1 ${year}`;
-      if (month >= 4 && month <= 6) return `Q2 ${year}`;
-      if (month >= 7 && month <= 9) return `Q3 ${year}`;
-      if (month >= 10 && month <= 12) return `Q4 ${year}`;
-      
-      return '';
-    } catch (error) {
-      return '';
-    }
-  };
-
-  // Define getColumns function inside the component to access state variables
-  const getColumns = (quarterFilter) => [
-    { field: "symbol", headerName: "رمز الشركة", width: 120, align: "right", headerAlign: "right" },
-    { field: "company_name", headerName: "الشركة", width: 200, align: "right", headerAlign: "right" },
-    { field: "foreign_ownership", headerName: "ملكية جميع المستثمرين الأجانب", width: 220, align: "right", headerAlign: "right" },
-    { field: "max_allowed", headerName: "الملكية الحالية", width: 150, align: "right", headerAlign: "right" },
-    { field: "investor_limit", headerName: "ملكية المستثمر الاستراتيجي الأجنبي", width: 220, align: "right", headerAlign: "right" },
-    { 
-      field: "previous_quarter_value", 
-      headerName: `الأرباح المبقاة للربع السابق (${quarterFilter === "Q1" ? "2024Q4" : quarterFilter === "Q2" ? "2025Q1" : quarterFilter === "Q3" ? "2025Q2" : quarterFilter === "Q4" ? "2025Q3" : "2024Q4"})`, 
-      width: 250, 
-      align: "right", 
-      headerAlign: "right",
-      renderCell: (params) => {
-        const value = params.value;
-        if (!value || value === "" || value === "null" || value === "undefined") {
-          return "لايوجد";
-        }
-        const numValue = parseFloat(value);
-        if (!isNaN(numValue)) {
-          return (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography>{numValue.toLocaleString('en-US')}</Typography>
-              <Tooltip title="عرض دليل الاستخراج - انقر لرؤية المستند الأصلي" arrow placement="top">
-                <IconButton 
-                  size="small" 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    let evidenceQuarter;
-                    if (quarterFilter === "Q1") {
-                      evidenceQuarter = "Annual_2024"; // Corrected from Q4_2024
-                    } else if (quarterFilter === "Q2") {
-                      evidenceQuarter = "Q1_2025";
-                    } else if (quarterFilter === "Q3") {
-                      evidenceQuarter = "Q2_2025";
-                    } else {
-                      evidenceQuarter = "Q3_2025";
-                    }
-                    fetchEvidenceData(params.row.symbol, evidenceQuarter);
-                    setEvidenceModalOpen(true);
-                  }}
-                  sx={{ 
-                    color: '#1e6641',
-                    '&:hover': { bgcolor: '#e8f5ee' },
-                    padding: '8px',
-                    minWidth: '40px',
-                    width: '40px',
-                    height: '40px'
-                  }}
-                >
-                  <VisibilityIcon sx={{ fontSize: '16px' }} />
-                </IconButton>
-              </Tooltip>
-            </Box>
-          );
-        }
-        return value;
-      }
-    },
-    { 
-      field: "current_quarter_value", 
-      headerName: `الأرباح المبقاة للربع الحالي (${quarterFilter === "Q1" ? "2025Q1" : quarterFilter === "Q2" ? "2025Q2" : quarterFilter === "Q3" ? "2025Q3" : quarterFilter === "Q4" ? "2025Q4" : "2025Q1"})`, 
-      width: 250, 
-      align: "right", 
-      headerAlign: "right",
-      renderCell: (params) => {
-        const value = params.value;
-        if (!value || value === "" || value === "null" || value === "undefined") {
-          return "لايوجد";
-        }
-        const numValue = parseFloat(value);
-        if (!isNaN(numValue)) {
-          return (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography>{numValue.toLocaleString('en-US')}</Typography>
-              <Tooltip title="عرض دليل الاستخراج - انقر لرؤية المستند الأصلي" arrow placement="top">
-                <IconButton 
-                  size="small" 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // For current quarter, use the quarterFilter
-                    let evidenceQuarter;
-                    if (quarterFilter === "Q1") {
-                      evidenceQuarter = "Q1_2025";
-                    } else if (quarterFilter === "Q2") {
-                      evidenceQuarter = "Q2_2025";
-                    } else if (quarterFilter === "Q3") {
-                      evidenceQuarter = "Q3_2025";
-                    } else {
-                      evidenceQuarter = "Q4_2025";
-                    }
-                    fetchEvidenceData(params.row.symbol, evidenceQuarter);
-                    setEvidenceModalOpen(true);
-                  }}
-                  sx={{ 
-                    color: '#1e6641',
-                    '&:hover': { bgcolor: '#e8f5ee' },
-                    padding: '8px',
-                    minWidth: '40px',
-                    width: '40px',
-                    height: '40px'
-                  }}
-                >
-                  <VisibilityIcon sx={{ fontSize: '16px' }} />
-                </IconButton>
-              </Tooltip>
-            </Box>
-          );
-        }
-        return value;
-      }
-    },
-    { 
-      field: "flow", 
-      headerName: "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)", 
-      width: 280, 
-      align: "right", 
-      headerAlign: "right",
-      renderCell: (params) => {
-        const value = params.value;
-        if (!value || value === "" || value === "null" || value === "undefined") {
-          return "لايوجد";
-        }
-        const numValue = parseFloat(value);
-        if (!isNaN(numValue)) {
-          const isPositive = numValue >= 0;
-          const color = isPositive ? '#2e7d32' : '#d32f2f';
-          const sign = numValue === 0 ? '' : (isPositive ? '+' : '');
-          return (
-            <Typography sx={{ color, fontWeight: 'bold' }}>
-              {sign}{numValue.toLocaleString('en-US')} SAR
-            </Typography>
-          );
-        }
-        return value;
-      }
-    },
-    { 
-      field: "foreign_investor_flow", 
-      headerName: "تدفق الأرباح المبقاة للمستثمر الأجنبي", 
-      width: 250, 
-      align: "right", 
-      headerAlign: "right",
-      renderCell: (params) => {
-        const value = params.value;
-        if (!value || value === "" || value === "null" || value === "undefined") {
-          return "لايوجد";
-        }
-        const numValue = parseFloat(value);
-        if (!isNaN(numValue)) {
-          const isPositive = numValue >= 0;
-          const color = isPositive ? '#2e7d32' : '#d32f2f';
-          const sign = numValue === 0 ? '' : (isPositive ? '+' : '');
-          return (
-            <Typography sx={{ color, fontWeight: 'bold' }}>
-              {sign}{numValue.toLocaleString('en-US')} SAR
-            </Typography>
-          );
-        }
-        return value;
-      }
-    },
-    { 
-      field: "net_profit",
-      headerName: "صافي الربح",
-      width: 150,
-      align: "right",
-      headerAlign: "right",
-      renderCell: (params) => {
-        const companySymbol = params.row.company_symbol;
-        const companyNetProfit = netProfitData[companySymbol];
-        
-        if (companyNetProfit && companyNetProfit.quarterly_net_profit) {
-          // Map quarter filter to 2025 data
-          let quarterKey;
-          if (quarterFilter === "Q1") quarterKey = "Q1 2025";
-          else if (quarterFilter === "Q2") quarterKey = "Q2 2025";
-          else if (quarterFilter === "Q3") quarterKey = "Q3 2025";
-          
-          const value = companyNetProfit.quarterly_net_profit[quarterKey];
-          
-          if (value !== undefined && value !== null) {
-            return value.toLocaleString('en-US');
-          }
-        }
-        return "لايوجد";
-      }
-    },
-    { 
-      field: "net_profit_foreign_investor",
-      headerName: "صافي الربح للمستثمر الأجنبي",
-      width: 220,
-      align: "right",
-      headerAlign: "right",
-      renderCell: (params) => {
-        const value = params.value;
-        if (!value || value === "" || value === "null" || value === "undefined") {
-          return "لايوجد";
-        }
-        const numValue = parseFloat(value);
-        if (!isNaN(numValue)) {
-          const isPositive = numValue >= 0;
-          const color = isPositive ? '#2e7d32' : '#d32f2f';
-          const sign = numValue === 0 ? '' : (isPositive ? '+' : '');
-          return (
-            <Typography sx={{ color, fontWeight: 'bold' }}>
-              {sign}{numValue.toLocaleString('en-US')} SAR
-            </Typography>
-          );
-        }
-        return value;
-      }
-    },
-    { 
-      field: "distributed_profits_foreign_investor",
-      headerName: "الأرباح الموزعة للمستثمر الأجنبي",
-      width: 250,
-      align: "right",
-      headerAlign: "right",
-      renderCell: (params) => {
-        const value = params.value;
-        if (!value || value === "" || value === "null" || value === "undefined") {
-          return "لايوجد";
-        }
-        const numValue = parseFloat(value);
-        if (!isNaN(numValue)) {
-          const isPositive = numValue >= 0;
-          const color = isPositive ? '#2e7d32' : '#d32f2f';
-          const sign = numValue === 0 ? '' : (isPositive ? '+' : '');
-          return (
-            <Typography sx={{ color, fontWeight: 'bold' }}>
-              {sign}{numValue.toLocaleString('en-US')} SAR
-            </Typography>
-          );
-        }
-        return value;
-      }
-    }
-  ];
-
   useEffect(() => {
     fetchData();
   }, []);
@@ -1292,20 +1122,11 @@ function App() {
   // Expose row update on globalThis so nested modal handlers can invoke it without prop drilling
   useEffect(() => {
     globalThis.updateRowAfterCorrection = (updated) => {
-      setRows((prevRows) => prevRows.map(row => {
-        if (row.symbol && updated.company_symbol && row.symbol.toString() === updated.company_symbol.toString()) {
-          return {
-            ...row,
-            retained_earnings: updated.retained_earnings || updated.value || '',
-            reinvested_earnings: updated.reinvested_earnings || '',
-            year: updated.year || '',
-            error: updated.error || '',
-          };
-        }
-        return row;
-      }));
+      setRows((prevRows) => mergeCorrectionIntoRows(prevRows, updated));
     };
-    return () => { globalThis.updateRowAfterCorrection = undefined; };
+    return () => {
+      globalThis.updateRowAfterCorrection = undefined;
+    };
   }, []);
 
   // Filter rows based on search and quarter filter
@@ -1320,9 +1141,10 @@ function App() {
     // Then apply search filter
     if (search) {
       const searchLower = search.toLowerCase();
-      filtered = filtered.filter((row) =>
-        (row.symbol && row.symbol.toString().toLowerCase().includes(searchLower)) ||
-        (row.company_name && row.company_name.toLowerCase().includes(searchLower))
+      filtered = filtered.filter(
+        (row) =>
+          row.symbol?.toString().toLowerCase().includes(searchLower) ||
+          row.company_name?.toLowerCase().includes(searchLower),
       );
     }
     
@@ -1366,16 +1188,10 @@ function App() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
-      // Get the filename from the response headers
-      const contentDisposition = response.headers.get('content-disposition');
-      let filename = 'dashboard_table.xlsx';
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
-      
+      const filename = filenameFromContentDispositionHeader(
+        response.headers.get("content-disposition"),
+      );
+
       // Create blob and download
       const blob = await response.blob();
       const url = globalThis.URL.createObjectURL(blob);
@@ -1405,26 +1221,12 @@ function App() {
         });
         
       // Show enhanced success message
-      const successMessage = `✅ تم التصدير بنجاح!\n\n📁 اسم الملف: ${filename}\n📅 التاريخ: ${customExportDate}\n🎯 الربع: ${getQuarterFromDate(customExportDate)}\n\nتم حفظ الملف في مجلد التنزيلات`;
+      const successMessage = `✅ تم التصدير بنجاح!\n\n📁 اسم الملف: ${filename}\n📅 التاريخ: ${customExportDate}\n🎯 الربع: ${quarterLabelFromDateString(customExportDate)}\n\nتم حفظ الملف في مجلد التنزيلات`;
       alert(successMessage);
       
     } catch (error) {
       console.error('Error exporting to Excel:', error);
-      
-      // Show enhanced error message
-      let errorMessage = '❌ فشل في تصدير ملف Excel\n\n';
-      
-      if (error.message.includes('404')) {
-        errorMessage += '🔍 السبب: لم يتم العثور على البيانات المطلوبة\n💡 الحل: تأكد من وجود البيانات للربع المحدد';
-      } else if (error.message.includes('500')) {
-        errorMessage += '🔧 السبب: خطأ في الخادم\n💡 الحل: حاول مرة أخرى أو اتصل بالدعم الفني';
-      } else if (error.message.includes('fetch')) {
-        errorMessage += '🌐 السبب: مشكلة في الاتصال\n💡 الحل: تأكد من تشغيل الخادم';
-      } else {
-        errorMessage += `🔍 السبب: ${error.message}\n💡 الحل: حاول مرة أخرى`;
-      }
-      
-      alert(errorMessage);
+      alert(`❌ فشل في تصدير ملف Excel\n\n${messageForCustomExportFailure(error)}`);
     } finally {
       setLoading(false);
     }
@@ -1517,8 +1319,8 @@ function App() {
             gap: { xs: 2, md: 0 },
           }}>
           {/* Search box in the right corner */}
-          <Box sx={{ minWidth: 320, maxWidth: 400, width: '100%', textAlign: 'right' }}>
-            <Typography sx={{ mb: 1, fontWeight: 'bold', color: '#37474f', fontSize: 18 }}>
+          <Stack spacing={1} sx={{ minWidth: 320, maxWidth: 400, width: "100%", textAlign: "right" }}>
+            <Typography sx={{ fontWeight: "bold", color: "#37474f", fontSize: 18 }}>
               رمز / شركة بحث
             </Typography>
             <TextField
@@ -1527,10 +1329,10 @@ function App() {
               variant="outlined"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              sx={{ bgcolor: 'white' }}
-              inputProps={{ style: { textAlign: 'right' } }}
+              sx={{ bgcolor: "white" }}
+              inputProps={{ style: { textAlign: "right" } }}
             />
-          </Box>
+          </Stack>
           {/* Reset button in the left corner */}
           <Box sx={{ 
             display: 'flex', 
@@ -1634,8 +1436,7 @@ function App() {
                 <Typography variant="h6" sx={{ fontWeight: 'bold', color: '#1e6641', mb: 1 }}>تحديث PDF قيد التنفيذ</Typography>
                 <LinearProgress color="success" />
                 <Typography sx={{ fontSize: 13, color: '#1e6641', mt: 1 }}>
-                  الحالة: {pdfJobStatus?.status || 'جاري التنفيذ'} — المُنجز: {pdfJobStatus?.processed || 0}
-                  {pdfJobStatus?.current_symbol ? ` — الحالي: ${pdfJobStatus.current_symbol}` : ''}
+                  {jobPipelineProgressCaption(pdfJobStatus)}
                 </Typography>
                 <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
                   <Button variant="outlined" onClick={async () => { try { await fetch(`${API_URL}/api/pdfs/stop`, { method: 'POST' }); } catch (e) {} }} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
@@ -1759,10 +1560,10 @@ function App() {
                   </Typography>
                 )}
                 <Typography sx={{ fontSize: 13, color: '#1e6641', mt: 1 }}>
-                  الأرباح المبقاة: {pdfJobStatus?.status || 'جاري التنفيذ'}{pdfJobStatus?.current_symbol ? ` — ${pdfJobStatus.current_symbol}` : ''}
+                  {combinedPipelineLine("الأرباح المبقاة", pdfJobStatus)}
                 </Typography>
                 <Typography sx={{ fontSize: 13, color: '#ff9800' }}>
-                  صافي الربح: {netJobStatus?.status || 'جاري التنفيذ'}{netJobStatus?.current_symbol ? ` — ${netJobStatus.current_symbol}` : ''}
+                  {combinedPipelineLine("صافي الربح", netJobStatus)}
                 </Typography>
                 <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
                   <Button
@@ -1773,7 +1574,7 @@ function App() {
                       try { await fetch(`${API_URL}/api/net_profit/stop`, { method: 'POST' }); } catch (e) {}
                     }}
                     disabled={bothIsStopping}
-                    sx={{ color: bothIsStopping ? '#999' : '#b71c1c', borderColor: bothIsStopping ? '#ccc' : '#b71c1c' }}
+                    sx={stopBothJobsButtonSx(bothIsStopping)}
                   >
                     {bothIsStopping ? 'جاري الإنهاء...' : 'إيقاف'}
                   </Button>
@@ -1786,8 +1587,7 @@ function App() {
                 <Typography variant="h6" sx={{ fontWeight: 'bold', color: '#ff9800', mb: 1 }}>تحديث صافي الربح قيد التنفيذ</Typography>
                 <LinearProgress color="warning" />
                 <Typography sx={{ fontSize: 13, color: '#ff9800', mt: 1 }}>
-                  الحالة: {netJobStatus?.status || 'جاري التنفيذ'} — المُنجز: {netJobStatus?.processed || 0}
-                  {netJobStatus?.current_symbol ? ` — الحالي: ${netJobStatus.current_symbol}` : ''}
+                  {jobPipelineProgressCaption(netJobStatus)}
                 </Typography>
                 <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
                   <Button variant="outlined" onClick={async () => { try { await fetch(`${API_URL}/api/net_profit/stop`, { method: 'POST' }); } catch (e) {} }} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
@@ -1796,8 +1596,7 @@ function App() {
             </Modal>
           </Box>
         </Box>
-        <Box sx={{ display: "flex", gap: 2, alignItems: "center", mb: 2 }}>
-            {/* Quarter Filter Dropdown */}
+        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2, flexWrap: "wrap" }}>
             <TextField
               select
               label="تصفية حسب الربع"
@@ -1820,10 +1619,9 @@ function App() {
               <MenuItem value="Q1">الربع الأول (Q1)</MenuItem>
               <MenuItem value="Q2">الربع الثاني (Q2)</MenuItem>
               <MenuItem value="Q3">الربع الثالث (Q3)</MenuItem>
+              <MenuItem value="Q4">الربع الرابع (Q4)</MenuItem>
             </TextField>
-            
-            
-          </Box>
+          </Stack>
         {/* DataGrid */}
         <Box sx={{ 
           width: '100%', 
@@ -1835,18 +1633,12 @@ function App() {
         }}>
           <DataGrid
             rows={filteredRows}
-            columns={getColumns(quarterFilter)}
+            columns={dashboardColumns}
             pageSize={20}
             rowsPerPageOptions={[20, 50, 100]}
             disableSelectionOnClick
             autoHeight
-            componentsProps={{
-              toolbar: {
-                showQuickFilter: true,
-                quickFilterProps: { debounceMs: 500 },
-              },
-            }}
-            // Optimize column rendering
+            componentsProps={DATA_GRID_COMPONENTS_PROPS}
             columnBuffer={1}
             columnThreshold={1}
             sx={{
@@ -1937,45 +1729,7 @@ function App() {
         error={evidenceError}
         onDataUpdate={fetchData}
       />
-      
-      {/* Edit Value Modal - Commented out since we're using inline editing */}
-      {/* <EditValueModal
-        open={editModalOpen}
-        onClose={() => setEditModalOpen(false)}
-        editData={editData}
-        onSave={async (companySymbol, fieldType, newValue, feedback) => {
-          setEditLoading(true);
-          try {
-            const response = await fetch(`${API_URL}/api/correct_retained_earnings`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                company_symbol: companySymbol,
-                field_type: fieldType,
-                correct_value: newValue,
-                feedback: feedback,
-              }),
-            });
-            const data = await response.json();
-            if (data.status === 'success' && data.updated) {
-              if (typeof globalThis.updateRowAfterCorrection === 'function') {
-                globalThis.updateRowAfterCorrection(data.updated);
-              }
-              setEditModalOpen(false);
-              setEditLoading(false);
-            } else {
-              alert('فشل في حفظ التصحيح: ' + (data.message || ''));
-              setEditLoading(false);
-            }
-          } catch (e) {
-            alert('حدث خطأ أثناء حفظ التصحيح: ' + e.message);
-            setEditModalOpen(false);
-            setEditLoading(false);
-          }
-        }}
-        loading={editLoading}
-      /> */}
-      
+
       {/* Footer */}
       <Box sx={{ textAlign: 'center', color: '#888', py: 2, fontSize: 16, mt: 'auto' }}>
         © {new Date().getFullYear()} مركز الابتكار
@@ -2374,8 +2128,8 @@ function App() {
 
               {/* Content */}
               <Box sx={{ p: 3 }}>
-                {/* Date Selection */}
-                <Box sx={{ mb: 3 }}>
+                {/* Date Selection — Stack avoids ambiguous JSX spacing after the date input */}
+                <Stack spacing={2} sx={{ mb: 3 }}>
                   <Typography variant="subtitle2" sx={{ 
                     fontWeight: 600, 
                     color: '#1e6641', 
@@ -2387,7 +2141,6 @@ function App() {
                   }}>
                     تاريخ التصدير
                   </Typography>
-                  
                   <TextField
                     type="date"
                     fullWidth
@@ -2418,11 +2171,8 @@ function App() {
                     }}
                     size="medium"
                   />
-                  
-                  {/* Quarter Preview */}
                   {customExportDate && (
                     <Box sx={{ 
-                      mt: 2,
                       p: 3,
                       bgcolor: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
                       borderRadius: 3,
@@ -2458,11 +2208,11 @@ function App() {
                         fontSize: 18,
                         textAlign: 'center'
                       }}>
-                        {getQuarterFromDate(customExportDate)}
+                        {quarterLabelFromDateString(customExportDate)}
                       </Typography>
                     </Box>
                   )}
-                </Box>
+                </Stack>
 
                 {/* File Name */}
                 <Box sx={{ mb: 3 }}>
@@ -2606,123 +2356,6 @@ function App() {
           </Fade>
         </Modal>
 
-        {/* Keep the old collapse structure for backward compatibility, but hide it */}
-        <Collapse in={false}>
-          <Box sx={{ 
-            px: 2, 
-            mb: 2,
-            bgcolor: '#fafbfc',
-            borderRadius: 3,
-            border: '1px solid #e9ecef',
-            py: 2
-          }}>
-            <Typography variant="body2" sx={{ color: '#495057', mb: 1.5, fontSize: 13, fontWeight: 600 }}>
-              📅 تصدير لتاريخ مخصص
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <TextField
-                type="date"
-                size="small"
-                value={customExportDate}
-                onChange={(e) => setCustomExportDate(e.target.value)}
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    borderRadius: 2,
-                    fontSize: 13,
-                    "& fieldset": { borderColor: "#e0e0e0" },
-                    "&:hover fieldset": { borderColor: "#1e6641" },
-                    "&:focus fieldset": { borderColor: "#1e6641" },
-                  },
-                  "& .MuiInputLabel-root": { color: "#666", fontSize: 12 },
-                }}
-              />
-              
-              {/* Show quarter mapping for custom date */}
-              {customExportDate && (
-                <Box sx={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: 1, 
-                  px: 1.5, 
-                  py: 0.8, 
-                  bgcolor: '#e8f5e8', 
-                  borderRadius: 2,
-                  border: '1px solid #c3e6c3',
-                  animation: 'fadeIn 0.3s ease-in-out'
-                }}>
-                  <Typography variant="caption" sx={{ color: '#1e6641', fontWeight: 600, fontSize: 11 }}>
-                    🎯 الربع: {getQuarterFromDate(customExportDate)}
-                  </Typography>
-                </Box>
-              )}
-              
-              <Button
-                variant="contained"
-                onClick={handleCustomDateExport}
-                disabled={!customExportDate}
-                size="small"
-                sx={{
-                  borderRadius: 2,
-                  bgcolor: customExportDate ? '#1e6641' : '#ccc',
-                  color: 'white',
-                  fontWeight: 600,
-                  fontSize: 12,
-                  textTransform: 'none',
-                  py: 1,
-                  transition: 'all 0.2s ease-in-out',
-                  '&:hover': {
-                    bgcolor: customExportDate ? '#14532d' : '#ccc',
-                    transform: customExportDate ? 'translateY(-1px)' : 'none',
-                    boxShadow: customExportDate ? '0 4px 8px rgba(30, 102, 65, 0.3)' : 'none',
-                  },
-                  '&:disabled': {
-                    bgcolor: '#ccc',
-                    cursor: 'not-allowed',
-                  }
-                }}
-                startIcon={customExportDate ? <FileDownloadIcon /> : null}
-              >
-                {customExportDate ? '📥 تصدير للتاريخ المحدد' : 'اختر تاريخ أولاً'}
-              </Button>
-            </Box>
-          </Box>
-          
-          {/* File Naming Customization */}
-          <Box sx={{ 
-            px: 2, 
-            mb: 2,
-            bgcolor: '#fafbfc',
-            borderRadius: 3,
-            border: '1px solid #e9ecef',
-            py: 2
-          }}>
-            <Typography variant="body2" sx={{ color: '#495057', mb: 1.5, fontSize: 13, fontWeight: 600 }}>
-              📝 تخصيص اسم الملف
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <TextField
-                size="small"
-                placeholder="اسم مخصص للملف (اختياري)"
-                value={customFileName}
-                onChange={(e) => setCustomFileName(e.target.value)}
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    borderRadius: 2,
-                    fontSize: 13,
-                    "& fieldset": { borderColor: "#e0e0e0" },
-                    "&:hover fieldset": { borderColor: "#1e6641" },
-                    "&:focus fieldset": { borderColor: "#1e6641" },
-                  },
-                  "& .MuiInputLabel-root": { color: "#666", fontSize: 12 },
-                }}
-              />
-              <Typography variant="caption" sx={{ color: '#888', fontSize: 10, fontStyle: 'italic' }}>
-                💡 سيتم إضافة التاريخ والوقت تلقائياً
-              </Typography>
-            </Box>
-          </Box>
-        </Collapse>
-        
         {/* Quarterly Archives List */}
         <List>
           {snapshotsLoading ? (
