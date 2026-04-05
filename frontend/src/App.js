@@ -37,6 +37,7 @@ import Stack from "@mui/material/Stack";
 import { buildDashboardColumns, GRID_EMPTY_AR } from "./dashboardColumns";
 import { mergeCorrectionIntoRows, quarterLabelFromDateString } from "./gridUtils";
 import { UpdateJobsDialog } from "./UpdateJobsDialog";
+import { createPipelineStatusPoller } from "./pipelineStatusPoll";
 
 // API URL configuration - supports both localhost and production
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5003';
@@ -1040,59 +1041,29 @@ function App() {
   }, []);
 
   const startPollPdf = (onComplete) => {
-    if (pdfPollId) return;
-    const id = setInterval(async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/pdfs/status`);
-        const data = await res.json();
-        setPdfJobStatus(data);
-        if (data.status === 'completed' || data.status === 'idle') {
-          clearInterval(id);
-          setPdfPollId(null);
-          setPdfProgressOpen(false);
-          // Trigger dashboard data reload (ensure backend has flushed files)
-          setTimeout(() => {
-            fetchData();
-            // also refresh net profit map in case both was selected
-            fetchNetProfitData();
-          }, 300);
-          if (typeof onComplete === 'function') {
-            onComplete();
-          }
-        }
-      } catch (e) {
-        console.warn("تعذر جلب حالة مهمة PDF", e);
-      }
-    }, 1500);
-    setPdfPollId(id);
+    createPipelineStatusPoller({
+      getPollId: () => pdfPollId,
+      setPollId: setPdfPollId,
+      apiUrl: API_URL,
+      statusPath: "/api/pdfs/status",
+      setJobStatus: setPdfJobStatus,
+      setProgressOpen: setPdfProgressOpen,
+      reloadFns: [fetchData, fetchNetProfitData],
+      warnMessage: "تعذر جلب حالة مهمة PDF",
+    })(onComplete);
   };
 
   const startPollNet = (onComplete) => {
-    if (netPollId) return;
-    const id = setInterval(async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/net_profit/status`);
-        const data = await res.json();
-        setNetJobStatus(data);
-        if (data.status === 'completed' || data.status === 'idle') {
-          clearInterval(id);
-          setNetPollId(null);
-          setNetProgressOpen(false);
-          // Trigger dashboard data reload (ensure backend has flushed files)
-          setTimeout(() => {
-            // refresh net profit and flows
-            fetchNetProfitData();
-            fetchData();
-          }, 300);
-          if (typeof onComplete === 'function') {
-            onComplete();
-          }
-        }
-      } catch (e) {
-        console.warn("تعذر جلب حالة مهمة صافي الربح", e);
-      }
-    }, 1500);
-    setNetPollId(id);
+    createPipelineStatusPoller({
+      getPollId: () => netPollId,
+      setPollId: setNetPollId,
+      apiUrl: API_URL,
+      statusPath: "/api/net_profit/status",
+      setJobStatus: setNetJobStatus,
+      setProgressOpen: setNetProgressOpen,
+      reloadFns: [fetchNetProfitData, fetchData],
+      warnMessage: "تعذر جلب حالة مهمة صافي الربح",
+    })(onComplete);
   };
 
   useEffect(() => {

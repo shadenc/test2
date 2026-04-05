@@ -17,7 +17,6 @@ from datetime import datetime
 import pandas as pd
 from apscheduler.schedulers.background import BackgroundScheduler
 import shutil
-import threading
 
 # Get environment variables for production
 ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', '*')
@@ -55,6 +54,67 @@ def format_excel_cell_display(value):
     return value
 
 
+def flow_map_from_flow_dataframe(flow_data: pd.DataFrame) -> dict:
+    """Symbol → quarter → flow CSV columns (shared by scheduler export and HTTP Excel export)."""
+    flow_map: dict = {}
+    for _, row in flow_data.iterrows():
+        symbol = str(row.get("company_symbol", "")).strip()
+        quarter = str(row.get("quarter", "")).strip()
+        if not symbol or not quarter:
+            continue
+        flow_map.setdefault(symbol, {})
+        flow_map[symbol][quarter] = {
+            "previous_value": row.get("previous_value", ""),
+            "current_value": row.get("current_value", ""),
+            "flow": row.get("flow", ""),
+            "flow_formula": row.get("flow_formula", ""),
+            "year": row.get("year", ""),
+            "reinvested_earnings_flow": row.get("reinvested_earnings_flow", ""),
+            "net_profit_foreign_investor": row.get("net_profit_foreign_investor", ""),
+            "distributed_profits_foreign_investor": row.get(
+                "distributed_profits_foreign_investor", ""
+            ),
+        }
+    return flow_map
+
+
+def excel_export_row_from_quarter_data(
+    symbol: str,
+    ownership_row: dict,
+    quarter_data: dict,
+    net_profit_display,
+    previous_quarter_header: str,
+    current_quarter_header: str,
+) -> dict:
+    """Single dashboard/Excel row (Arabic column headers); used by scheduler and evidence routes."""
+    return {
+        "رمز الشركة": symbol,
+        "الشركة": ownership_row.get("company_name", ""),
+        "ملكية جميع المستثمرين الأجانب": ownership_row.get("foreign_ownership", ""),
+        "الملكية الحالية": ownership_row.get("max_allowed", ""),
+        "ملكية المستثمر الاستراتيجي الأجنبي": ownership_row.get("investor_limit", ""),
+        f"الأرباح المبقاة للربع السابق ({previous_quarter_header})": format_excel_cell_display(
+            quarter_data.get("previous_value", "")
+        ),
+        f"الأرباح المبقاة للربع الحالي ({current_quarter_header})": format_excel_cell_display(
+            quarter_data.get("current_value", "")
+        ),
+        "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)": format_excel_cell_display(
+            quarter_data.get("flow", "")
+        ),
+        "تدفق الأرباح المبقاة للمستثمر الأجنبي": format_excel_cell_display(
+            quarter_data.get("reinvested_earnings_flow", "")
+        ),
+        "صافي الربح": net_profit_display,
+        "صافي الربح للمستثمر الأجنبي": format_excel_cell_display(
+            quarter_data.get("net_profit_foreign_investor", "")
+        ),
+        "الأرباح الموزعة للمستثمر الأجنبي": format_excel_cell_display(
+            quarter_data.get("distributed_profits_foreign_investor", "")
+        ),
+    }
+
+
 EVIDENCE_QUARTER_PARAMS = frozenset({
     "Q4_2024",
     "Q1_2025",
@@ -71,6 +131,19 @@ def _safe_quarter_token(quarter: str) -> str:
 
 def _symbol_len_label(symbol) -> str:
     return str(len(str(symbol)))
+
+
+def _run_project_script(project_root: Path, script_relpath: str, *, ok_log: str | None = None) -> None:
+    """Run a repo Python script from project root (scheduler jobs; deduplicates subprocess.run blocks)."""
+    subprocess.run(
+        [sys.executable, script_relpath],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=str(project_root),
+    )
+    if ok_log:
+        logger.info(ok_log)
 
 
 def _scheduler_quarter_calendar(now: datetime) -> tuple[str, str, int, int]:
@@ -114,29 +187,6 @@ def _scheduler_load_inputs(project_root: Path):
     return ownership_data, flow_data, net_profit_data, csv_path
 
 
-def _scheduler_flow_map_from_df(flow_data: pd.DataFrame) -> dict:
-    flow_map: dict = {}
-    for _, row in flow_data.iterrows():
-        symbol = str(row.get("company_symbol", "")).strip()
-        quarter = str(row.get("quarter", "")).strip()
-        if not symbol or not quarter:
-            continue
-        flow_map.setdefault(symbol, {})
-        flow_map[symbol][quarter] = {
-            "previous_value": row.get("previous_value", ""),
-            "current_value": row.get("current_value", ""),
-            "flow": row.get("flow", ""),
-            "flow_formula": row.get("flow_formula", ""),
-            "year": row.get("year", ""),
-            "reinvested_earnings_flow": row.get("reinvested_earnings_flow", ""),
-            "net_profit_foreign_investor": row.get("net_profit_foreign_investor", ""),
-            "distributed_profits_foreign_investor": row.get(
-                "distributed_profits_foreign_investor", ""
-            ),
-        }
-    return flow_map
-
-
 def _scheduler_merged_export_rows(
     ownership_data,
     flow_map: dict,
@@ -167,32 +217,14 @@ def _scheduler_merged_export_rows(
         current_quarter_header = f"{current_year}{current_quarter}"
 
         merged_data.append(
-            {
-                "رمز الشركة": symbol,
-                "الشركة": ownership_row.get("company_name", ""),
-                "ملكية جميع المستثمرين الأجانب": ownership_row.get("foreign_ownership", ""),
-                "الملكية الحالية": ownership_row.get("max_allowed", ""),
-                "ملكية المستثمر الاستراتيجي الأجنبي": ownership_row.get("investor_limit", ""),
-                f"الأرباح المبقاة للربع السابق ({previous_quarter_header})": format_excel_cell_display(
-                    quarter_data.get("previous_value", "")
-                ),
-                f"الأرباح المبقاة للربع الحالي ({current_quarter_header})": format_excel_cell_display(
-                    quarter_data.get("current_value", "")
-                ),
-                "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)": format_excel_cell_display(
-                    quarter_data.get("flow", "")
-                ),
-                "تدفق الأرباح المبقاة للمستثمر الأجنبي": format_excel_cell_display(
-                    quarter_data.get("reinvested_earnings_flow", "")
-                ),
-                "صافي الربح": net_profit_value,
-                "صافي الربح للمستثمر الأجنبي": format_excel_cell_display(
-                    quarter_data.get("net_profit_foreign_investor", "")
-                ),
-                "الأرباح الموزعة للمستثمر الأجنبي": format_excel_cell_display(
-                    quarter_data.get("distributed_profits_foreign_investor", "")
-                ),
-            }
+            excel_export_row_from_quarter_data(
+                symbol,
+                ownership_row,
+                quarter_data,
+                net_profit_value,
+                previous_quarter_header,
+                current_quarter_header,
+            )
         )
     return merged_data
 
@@ -237,24 +269,18 @@ def run_quarterly_refresh_and_archive(project_root: Path) -> None:
         logger.info("[Scheduler] Running quarterly refresh and archive...")
 
         logger.info("[Scheduler] Step 1: Recalculating reinvested earnings...")
-        subprocess.run(
-            [sys.executable, SCRIPT_CALCULATE_REINVESTED],
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=str(project_root),
+        _run_project_script(
+            project_root,
+            SCRIPT_CALCULATE_REINVESTED,
+            ok_log="[Scheduler] ✅ Reinvested earnings calculation completed",
         )
-        logger.info("[Scheduler] ✅ Reinvested earnings calculation completed")
 
         logger.info("[Scheduler] Step 2: Regenerating evidence screenshots...")
-        subprocess.run(
-            [sys.executable, SCRIPT_GENERATE_SCREENSHOTS],
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=str(project_root),
+        _run_project_script(
+            project_root,
+            SCRIPT_GENERATE_SCREENSHOTS,
+            ok_log="[Scheduler] ✅ Evidence screenshots regeneration completed",
         )
-        logger.info("[Scheduler] ✅ Evidence screenshots regeneration completed")
 
         logger.info("[Scheduler] Step 3: Exporting dashboard table for each quarter...")
 
@@ -275,7 +301,7 @@ def run_quarterly_refresh_and_archive(project_root: Path) -> None:
         logger.info(f"[Scheduler] Current quarter: {current_quarter} {current_year}")
         logger.info(f"[Scheduler] Previous quarter: {previous_quarter} {previous_year}")
 
-        flow_map = _scheduler_flow_map_from_df(flow_data)
+        flow_map = flow_map_from_flow_dataframe(flow_data)
         logger.info(f"[Scheduler] Exporting data for {current_quarter} {current_year}...")
 
         merged_data = _scheduler_merged_export_rows(
@@ -316,14 +342,11 @@ def run_daily_ownership_scraper_and_recalc(project_root: Path) -> None:
 
         try:
             logger.info("[Scheduler] Step 2: Recalculating reinvested earnings flows...")
-            subprocess.run(
-                [sys.executable, SCRIPT_CALCULATE_REINVESTED],
-                check=True,
-                capture_output=True,
-                text=True,
-                cwd=str(project_root),
+            _run_project_script(
+                project_root,
+                SCRIPT_CALCULATE_REINVESTED,
+                ok_log="[Scheduler] ✅ Recalculation finished",
             )
-            logger.info("[Scheduler] ✅ Recalculation finished")
         except subprocess.CalledProcessError as e:
             logger.error(f"[Scheduler] ❌ Recalculation failed: {e.stderr}")
     except Exception as e:

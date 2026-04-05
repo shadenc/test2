@@ -28,7 +28,8 @@ from src.api.evidence_api import (
     RUNTIME_STOP_PDFS_FLAG,
     SCRIPT_CALCULATE_REINVESTED,
     SCRIPT_GENERATE_SCREENSHOTS,
-    format_excel_cell_display,
+    excel_export_row_from_quarter_data,
+    flow_map_from_flow_dataframe,
     logger,
     run_quarterly_refresh_and_archive,
     _safe_quarter_token,
@@ -580,29 +581,6 @@ _EXCEL_PREVIOUS_Q_LABEL = {"Q1": "2024Q4", "Q2": "2025Q1", "Q3": "2025Q2", "Q4":
 _EXCEL_CURRENT_Q_LABEL = {"Q1": "2025Q1", "Q2": "2025Q2", "Q3": "2025Q3", "Q4": "2025Q4"}
 
 
-def _build_flow_map_for_excel_export(flow_data: pd.DataFrame) -> dict:
-    flow_map: dict = {}
-    for _, row in flow_data.iterrows():
-        symbol = str(row.get("company_symbol", "")).strip()
-        quarter = str(row.get("quarter", "")).strip()
-        if not symbol or not quarter:
-            continue
-        flow_map.setdefault(symbol, {})
-        flow_map[symbol][quarter] = {
-            "previous_value": row.get("previous_value", ""),
-            "current_value": row.get("current_value", ""),
-            "flow": row.get("flow", ""),
-            "flow_formula": row.get("flow_formula", ""),
-            "year": row.get("year", ""),
-            "reinvested_earnings_flow": row.get("reinvested_earnings_flow", ""),
-            "net_profit_foreign_investor": row.get("net_profit_foreign_investor", ""),
-            "distributed_profits_foreign_investor": row.get(
-                "distributed_profits_foreign_investor", ""
-            ),
-        }
-    return flow_map
-
-
 def _load_net_profit_lookup(project_root: Path) -> dict:
     net_profit_path = project_root / QUARTERLY_NET_PROFIT_RELPATH
     out: dict = {}
@@ -664,34 +642,14 @@ def _merged_excel_row_for_company(
         qnp = net_profit_info["quarterly_net_profit"]
         if quarter_key in qnp:
             net_profit_value = qnp[quarter_key]
-    previous_quarter = _EXCEL_PREVIOUS_Q_LABEL.get(quarter_filter, "")
-    current_quarter = _EXCEL_CURRENT_Q_LABEL.get(quarter_filter, "")
-    return {
-        "رمز الشركة": symbol,
-        "الشركة": ownership_row.get("company_name", ""),
-        "ملكية جميع المستثمرين الأجانب": ownership_row.get("foreign_ownership", ""),
-        "الملكية الحالية": ownership_row.get("max_allowed", ""),
-        "ملكية المستثمر الاستراتيجي الأجنبي": ownership_row.get("investor_limit", ""),
-        f"الأرباح المبقاة للربع السابق ({previous_quarter})": format_excel_cell_display(
-            quarter_data.get("previous_value", "")
-        ),
-        f"الأرباح المبقاة للربع الحالي ({current_quarter})": format_excel_cell_display(
-            quarter_data.get("current_value", "")
-        ),
-        "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)": format_excel_cell_display(
-            quarter_data.get("flow", "")
-        ),
-        "تدفق الأرباح المبقاة للمستثمر الأجنبي": format_excel_cell_display(
-            quarter_data.get("reinvested_earnings_flow", "")
-        ),
-        "صافي الربح": net_profit_value,
-        "صافي الربح للمستثمر الأجنبي": format_excel_cell_display(
-            quarter_data.get("net_profit_foreign_investor", "")
-        ),
-        "الأرباح الموزعة للمستثمر الأجنبي": format_excel_cell_display(
-            quarter_data.get("distributed_profits_foreign_investor", "")
-        ),
-    }
+    return excel_export_row_from_quarter_data(
+        symbol,
+        ownership_row,
+        quarter_data,
+        net_profit_value,
+        _EXCEL_PREVIOUS_Q_LABEL.get(quarter_filter, ""),
+        _EXCEL_CURRENT_Q_LABEL.get(quarter_filter, ""),
+    )
 
 
 def _export_excel_download_filename(
@@ -1058,7 +1016,7 @@ def export_excel():
         if load_err:
             return jsonify({"error": load_err}), 500
 
-        flow_map = _build_flow_map_for_excel_export(flow_data)
+        flow_map = flow_map_from_flow_dataframe(flow_data)
         net_profit_data = _load_net_profit_lookup(project_root)
         quarter_filter, date_err = _apply_custom_date_to_quarter_filter(
             quarter_filter, custom_date
