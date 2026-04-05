@@ -13,14 +13,16 @@ from datetime import datetime
 import openai
 import os
 from typing import Dict, List, Optional
-import os
 import logging
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Load OpenAI API key
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+
+# OpenAI API key: set OPENAI_API_KEY in the environment or in a project-root .env file
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 class EvidenceScreenshotGenerator:
