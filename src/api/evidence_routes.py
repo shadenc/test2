@@ -41,6 +41,38 @@ def _ctx():
     return current_app.config["EVIDENCE_CTX"]
 
 
+def _quarter_evidence_globs(company_symbol: str, quarter: str) -> tuple[str, str | None]:
+    """Primary glob under screenshots dir; optional Q1→annual-2024 secondary glob."""
+    s = company_symbol
+    annual_2024 = f"{s}_*_annual_2024_evidence.png"
+    known: dict[str, tuple[str, str | None]] = {
+        "Q4_2024": (f"{s}_*_q4_2024_evidence.png", None),
+        "Q1_2025": (f"{s}_*_q1_2025_evidence.png", annual_2024),
+        "Q2_2025": (f"{s}_*_q2_2025_evidence.png", None),
+        "Q3_2025": (f"{s}_*_q3_2025_evidence.png", None),
+        "Q4_2025": (f"{s}_*_q4_2025_evidence.png", None),
+        "Annual_2024": (annual_2024, None),
+    }
+    return known.get(quarter, (f"{s}_*_evidence.png", None))
+
+
+def _list_evidence_screenshots_for_quarter(
+    screenshots_dir: Path, company_symbol: str, quarter: str
+) -> list[Path]:
+    """Resolve screenshot paths: quarter-specific glob, Q1 annual fallback, then any evidence."""
+    primary, q1_fallback = _quarter_evidence_globs(company_symbol, quarter)
+    files = list(screenshots_dir.glob(primary))
+    if quarter == "Q1_2025" and not files and q1_fallback is not None:
+        logger.info(
+            "No Q1 2025 screenshot; trying annual 2024 fallback (symbol_len=%s)",
+            _symbol_len_label(company_symbol),
+        )
+        files = list(screenshots_dir.glob(q1_fallback))
+    if not files:
+        files = list(screenshots_dir.glob(f"{company_symbol}_*_evidence.png"))
+    return files
+
+
 @bp.route('/api/evidence/<company_symbol>.png', methods=['GET'])
 def get_evidence_screenshot(company_symbol):
     """
@@ -49,46 +81,11 @@ def get_evidence_screenshot(company_symbol):
     try:
         # Get quarter parameter from query string
         quarter = request.args.get('quarter', 'Q1_2025')  # Default to Q1 2025
-        
-        # Map quarter parameter to screenshot search pattern
-        # Handle the special case where "previous quarter" for Q1 refers to annual statement
-        quarter_pattern = ""
-        if quarter == "Q4_2024":
-            quarter_pattern = f"{company_symbol}_*_q4_2024_evidence.png"
-        elif quarter == "Q1_2025":
-            # Q1 2025 previous quarter is Annual 2024, so look for both
-            quarter_pattern = f"{company_symbol}_*_q1_2025_evidence.png"
-            # Also look for annual 2024 as fallback since it's the "previous quarter" reference
-            fallback_pattern = f"{company_symbol}_*_annual_2024_evidence.png"
-        elif quarter == "Q2_2025":
-            quarter_pattern = f"{company_symbol}_*_q2_2025_evidence.png"
-        elif quarter == "Q3_2025":
-            quarter_pattern = f"{company_symbol}_*_q3_2025_evidence.png"
-        elif quarter == "Q4_2025":
-            quarter_pattern = f"{company_symbol}_*_q4_2025_evidence.png"
-        elif quarter == "Annual_2024":
-            # Direct request for Annual 2024 evidence
-            quarter_pattern = f"{company_symbol}_*_annual_2024_evidence.png"
-        else:
-            # Fallback: search for any evidence for this company
-            quarter_pattern = f"{company_symbol}_*_evidence.png"
-        
-        # Search for screenshot files for the specific quarter
-        screenshot_files = list(_ctx().screenshots_dir.glob(quarter_pattern))
-        
-        # Special handling for Q1_2025: if no Q1 screenshot found, try annual 2024
-        if quarter == "Q1_2025" and not screenshot_files:
-            logger.info(
-                "No Q1 2025 screenshot; trying annual 2024 fallback (symbol_len=%s)",
-                _symbol_len_label(company_symbol),
-            )
-            screenshot_files = list(_ctx().screenshots_dir.glob(fallback_pattern))
-        
-        # If no specific quarter evidence found, try to find any evidence for this company
-        if not screenshot_files:
-            fallback_pattern = f"{company_symbol}_*_evidence.png"
-            screenshot_files = list(_ctx().screenshots_dir.glob(fallback_pattern))
-        
+
+        screenshot_files = _list_evidence_screenshots_for_quarter(
+            _ctx().screenshots_dir, company_symbol, quarter
+        )
+
         if not screenshot_files:
             return jsonify({"error": "Evidence screenshot not found"}), 404
         
@@ -158,62 +155,24 @@ def get_extraction_by_company(company_symbol):
     try:
         # Get quarter parameter from query string
         quarter = request.args.get('quarter', 'Q1_2025')  # Default to Q1 2025
-        
+
         # Load extraction results
         with open(_ctx().results_file, 'r', encoding='utf-8') as f:
             results = json.load(f)
-        
-        # Find the specific company
-        company_result = None
-        for result in results:
-            if result['company_symbol'] == company_symbol:
-                company_result = result
-                break
-        
+
+        company_result = next(
+            (r for r in results if r['company_symbol'] == company_symbol),
+            None,
+        )
+
         if not company_result:
             return jsonify({"error": "Company not found"}), 404
-        
-        # Map quarter parameter to screenshot search pattern
-        quarter_pattern = ""
-        if quarter == "Q4_2024":
-            quarter_pattern = f"{company_symbol}_*_q4_2024_evidence.png"
-        elif quarter == "Q1_2025":
-            # Q1 2025 previous quarter is Annual 2024, so look for both
-            quarter_pattern = f"{company_symbol}_*_q1_2025_evidence.png"
-            # Also look for annual 2024 as fallback since it's the "previous quarter" reference
-            fallback_pattern = f"{company_symbol}_*_annual_2024_evidence.png"
-        elif quarter == "Q2_2025":
-            quarter_pattern = f"{company_symbol}_*_q2_2025_evidence.png"
-        elif quarter == "Q3_2025":
-            quarter_pattern = f"{company_symbol}_*_q3_2025_evidence.png"
-        elif quarter == "Q4_2025":
-            quarter_pattern = f"{company_symbol}_*_q4_2025_evidence.png"
-        elif quarter == "Annual_2024":
-            # Direct request for Annual 2024 evidence
-            quarter_pattern = f"{company_symbol}_*_annual_2024_evidence.png"
-        else:
-            # Fallback: search for any evidence for this company
-            quarter_pattern = f"{company_symbol}_*_evidence.png"
-        
-        # Check if evidence screenshot exists for the specific quarter
-        screenshot_files = list(_ctx().screenshots_dir.glob(quarter_pattern))
+
+        screenshot_files = _list_evidence_screenshots_for_quarter(
+            _ctx().screenshots_dir, company_symbol, quarter
+        )
         has_evidence = len(screenshot_files) > 0
-        
-        # Special handling for Q1_2025: if no Q1 screenshot found, try annual 2024
-        if quarter == "Q1_2025" and not has_evidence:
-            logger.info(
-                "No Q1 2025 screenshot in extraction check; annual 2024 fallback (symbol_len=%s)",
-                _symbol_len_label(company_symbol),
-            )
-            screenshot_files = list(_ctx().screenshots_dir.glob(fallback_pattern))
-            has_evidence = len(screenshot_files) > 0
-        
-        # If no specific quarter evidence found, try to find any evidence for this company
-        if not has_evidence:
-            fallback_pattern = f"{company_symbol}_*_evidence.png"
-            screenshot_files = list(_ctx().screenshots_dir.glob(fallback_pattern))
-            has_evidence = len(screenshot_files) > 0
-        
+
         # Add evidence information
         company_result['evidence'] = {
             'has_evidence': has_evidence,

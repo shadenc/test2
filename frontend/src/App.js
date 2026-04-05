@@ -498,7 +498,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                 {/* Scaling explanation */}
                 <Box sx={{ mt: 1.5, p: 1.5, bgcolor: '#f7f9f8', border: '1px solid #e0e6e4', borderRadius: 1.5 }}>
                   {(() => {
-                    const rawStr = String(evidenceData.value ?? "").replace(/[^0-9,.-]/g, "");
+                    const rawStr = String(evidenceData.value ?? "").replaceAll(/[^0-9,.-]/g, "");
                     const raw = Number(rawStr.replaceAll(",", ""));
                     const mult = Number(evidenceData.applied_multiplier ?? 1);
                     const unit = String(evidenceData.unit_detected ?? "SAR");
@@ -1009,8 +1009,9 @@ function App() {
   // Background jobs state
   const [pdfJobStatus, setPdfJobStatus] = useState({ status: 'idle' });
   const [netJobStatus, setNetJobStatus] = useState({ status: 'idle' });
-  const [, setIsPdfRunning] = useState(false);
-  const [, setIsNetRunning] = useState(false);
+  // Busy flags: only setters are used (passed to UpdateJobsDialog); values are not read here.
+  const [isPdfRunning, setIsPdfRunning] = useState(false); // eslint-disable-line no-unused-vars
+  const [isNetRunning, setIsNetRunning] = useState(false); // eslint-disable-line no-unused-vars
   const [pdfPollId, setPdfPollId] = useState(null);
   const [netPollId, setNetPollId] = useState(null);
   const [pdfProgressOpen, setPdfProgressOpen] = useState(false);

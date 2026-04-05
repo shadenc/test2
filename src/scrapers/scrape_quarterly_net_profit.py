@@ -333,7 +333,7 @@ async def _find_net_profit_row_in_statement(rows, symbol: str):
 
 
 async def _net_profit_values_for_quarters(
-    net_profit_row, quarters: List[str], symbol: str
+    net_profit_row, quarters: List[str]
 ) -> Dict[str, Optional[float]]:
     cells = await net_profit_row.query_selector_all("td")
     net_profit_values: Dict[str, Optional[float]] = {}
@@ -425,9 +425,7 @@ async def scrape_quarterly_net_profit(page: Page, symbol: str) -> Optional[Dict]
         if not net_profit_row:
             return None
 
-        net_profit_values = await _net_profit_values_for_quarters(
-            net_profit_row, quarters, symbol
-        )
+        net_profit_values = await _net_profit_values_for_quarters(net_profit_row, quarters)
         if not net_profit_values:
             print(f"❌ No net profit values extracted for {symbol}")
             return None
@@ -457,55 +455,62 @@ async def _safe_close_net_profit_page(page: Optional[Page]) -> None:
         await page.close()
 
 
+def _log_net_profit_retry_attempt(
+    symbol: str, attempt: int, max_retries: int, phase: str
+) -> None:
+    """phase: profile | financial | scrape"""
+    nxt = attempt + 2
+    if phase == "profile":
+        print(f"🔄 Retrying navigation for {symbol} (attempt {nxt}/{max_retries})...")
+        return
+    if phase == "financial":
+        print(
+            f"🔄 Retrying financial info navigation for {symbol} "
+            f"(attempt {nxt}/{max_retries})..."
+        )
+        return
+    print(f"🔄 Retrying scraping for {symbol} (attempt {nxt}/{max_retries})...")
+
+
+async def _run_one_net_profit_scrape_attempt(
+    browser: Browser, symbol: str
+) -> Tuple[Optional[Dict], str]:
+    """
+    One browser page lifecycle: navigate, scrape. Returns (data, phase).
+    phase is 'ok' if data is not None; otherwise profile | financial | scrape.
+    """
+    page: Optional[Page] = await browser.new_page()
+    try:
+        await page.mouse.move(random.randint(100, 500), random.randint(100, 300))
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        if not await navigate_to_company_profile(page, symbol):
+            return None, "profile"
+        if not await navigate_to_financial_information(page, symbol):
+            return None, "financial"
+        data = await scrape_quarterly_net_profit(page, symbol)
+        if data:
+            return data, "ok"
+        return None, "scrape"
+    finally:
+        await _safe_close_net_profit_page(page)
+
+
 async def process_company_with_retry(browser: Browser, symbol: str, max_retries: int = 3) -> Optional[Dict]:
     """Process a single company with retry logic."""
     for attempt in range(max_retries):
-        page: Optional[Page] = None
         try:
-            page = await browser.new_page()
-            await page.mouse.move(random.randint(100, 500), random.randint(100, 300))
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-
-            if not await navigate_to_company_profile(page, symbol):
-                await _safe_close_net_profit_page(page)
-                page = None
-                if _net_profit_should_retry(attempt, max_retries):
-                    print(
-                        f"🔄 Retrying navigation for {symbol} (attempt {attempt + 2}/{max_retries})..."
-                    )
-                    await asyncio.sleep(random.uniform(2, 5))
-                    continue
-                return None
-
-            if not await navigate_to_financial_information(page, symbol):
-                await _safe_close_net_profit_page(page)
-                page = None
-                if _net_profit_should_retry(attempt, max_retries):
-                    print(
-                        f"🔄 Retrying financial info navigation for {symbol} "
-                        f"(attempt {attempt + 2}/{max_retries})..."
-                    )
-                    await asyncio.sleep(random.uniform(2, 5))
-                    continue
-                return None
-
-            result = await scrape_quarterly_net_profit(page, symbol)
-            await _safe_close_net_profit_page(page)
-            page = None
-
-            if result:
+            result, phase = await _run_one_net_profit_scrape_attempt(browser, symbol)
+            if result is not None:
                 return result
-            if _net_profit_should_retry(attempt, max_retries):
-                print(f"🔄 Retrying scraping for {symbol} (attempt {attempt + 2}/{max_retries})...")
-                await asyncio.sleep(random.uniform(2, 5))
-
+            if not _net_profit_should_retry(attempt, max_retries):
+                return None
+            _log_net_profit_retry_attempt(symbol, attempt, max_retries, phase)
+            await asyncio.sleep(random.uniform(2, 5))
         except Exception as e:
             print(f"❌ Error processing {symbol} (attempt {attempt + 1}): {e}")
-            await _safe_close_net_profit_page(page)
-            page = None
-            if _net_profit_should_retry(attempt, max_retries):
-                await asyncio.sleep(random.uniform(2, 5))
-
+            if not _net_profit_should_retry(attempt, max_retries):
+                return None
+            await asyncio.sleep(random.uniform(2, 5))
     return None
 
 async def scrape_all_companies_net_profit():

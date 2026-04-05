@@ -91,10 +91,13 @@ class EvidenceScreenshotGenerator:
 
     def _resolved_pdf_path(self, pdf_filename: str) -> Optional[Path]:
         if not pdf_filename or any(sep in pdf_filename for sep in ("/", "\\")) or ".." in pdf_filename:
-            logger.warning("Rejected PDF path with directory components: %s", pdf_filename)
+            logger.warning(
+                "Rejected PDF path with directory components (length=%s)",
+                len(pdf_filename),
+            )
             return None
         if not _SAFE_PDF_BASENAME.fullmatch(pdf_filename):
-            logger.warning("Rejected unsafe PDF basename: %s", pdf_filename)
+            logger.warning("Rejected unsafe PDF basename (length=%s)", len(pdf_filename))
             return None
         root = _PDF_INPUT_DIR.resolve()
         path = (root / pdf_filename).resolve()
@@ -151,10 +154,14 @@ class EvidenceScreenshotGenerator:
             output_path = self.output_dir / output_filename
             pix.save(str(output_path))
             doc.close()
-            logger.info(f"Generated page screenshot: {output_path}")
+            logger.info("Generated page screenshot file=%s", output_path.name)
             return str(output_path)
         except Exception as e:
-            logger.error(f"Error generating page screenshot for {pdf_path}: {e}")
+            logger.error(
+                "Error generating page screenshot file=%s: %s",
+                Path(pdf_path).name,
+                type(e).__name__,
+            )
             return None
     
     def generate_all_evidence_screenshots(self, results_file: str = "retained_earnings_results.json"):
@@ -180,7 +187,7 @@ class EvidenceScreenshotGenerator:
                 if pdf_path is None:
                     continue
                 if not pdf_path.is_file():
-                    logger.warning("PDF not found: %s", pdf_path)
+                    logger.warning("PDF not found file=%s", pdf_path.name)
                     continue
 
                 screenshot_path = self.generate_highlight_screenshot(str(pdf_path), value)
@@ -204,7 +211,7 @@ class EvidenceScreenshotGenerator:
             return generated_screenshots
             
         except Exception as e:
-            logger.error(f"Error generating evidence screenshots: {e}")
+            logger.error("Error generating evidence screenshots: %s", type(e).__name__)
             return []
 
 def main():
@@ -220,7 +227,9 @@ def main():
     if screenshots:
         print("\nGenerated evidence for:")
         for screenshot in screenshots:
-            print(f"  {screenshot['company_symbol']}: {screenshot['value']} -> {screenshot['screenshot_path']}")
+            sym = screenshot.get("company_symbol") or ""
+            out = Path(screenshot.get("screenshot_path", "")).name
+            print(f"  symbol_len={len(sym)} output={out}")
 
     print("\nScreenshots saved to: output/screenshots/")
     print("Metadata saved to: output/screenshots/evidence_metadata.json")

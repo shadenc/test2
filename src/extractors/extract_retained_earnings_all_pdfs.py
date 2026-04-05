@@ -618,7 +618,7 @@ def main():
     print(f"Successful extractions: {successful_extractions}")
     print(f"Success rate: {successful_extractions/len(pdf_files)*100:.1f}%")
     print(f"Results saved to: {output_file}")
-    print(f"Results also saved to database: data/financial_analysis.db")
+    print("Results also saved to database: data/financial_analysis.db")
     
 if __name__ == "__main__":
     main() 

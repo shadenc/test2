@@ -147,39 +147,45 @@ async def setup_stealth_browser():
     
     return playwright, browser, context
 
+
+async def _debug_print_page_link_elements(links) -> None:
+    print("--- <a.pageLink> elements on the page ---")
+    for i, link in enumerate(links):
+        text = (await link.text_content() or "").strip()
+        href = await link.get_attribute("href")
+        print(f'{i}: text="{text}", href="{href}"')
+    print("--- end of <a.pageLink> debug ---")
+
+
+async def _links_matching_visit_profile(links) -> list:
+    found = []
+    for link in links:
+        text = (await link.text_content() or "").strip().lower()
+        if text == "visit profile":
+            found.append(link)
+    return found
+
+
 async def navigate_to_company_profile(page: Page, symbol: str) -> bool:
     """Navigate to the company profile page using the working approach from download_annual_reports.py."""
     search_url = "https://www.saudiexchange.sa/wps/portal/saudiexchange/hidden/search/!ut/p/z0/04_Sj9CPykssy0xPLMnMz0vMAfIjo8ziTR3NDIw8LAz8DTxCnA3MDILdzUJDLAyNHI30C7IdFQEEx_vC/"
     await page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
     print(f"Navigated to search page for symbol {symbol}")
     try:
-        # Focus the input, fill the symbol, and submit search
         await page.wait_for_selector(SEARCH_INPUT_SELECTOR, timeout=5000)
         await page.click(SEARCH_INPUT_SELECTOR)
         await page.fill(SEARCH_INPUT_SELECTOR, symbol)
         await page.wait_for_timeout(500)
-        # Use only JS click to submit
         await page.evaluate("document.querySelector('div.srchBlueBtn').click()")
         await page.wait_for_timeout(2000)
-        # Print all a.pageLink elements for debugging
         links = await page.query_selector_all("a.pageLink")
-        print('--- <a.pageLink> elements on the page ---')
-        for i, link in enumerate(links):
-            text = (await link.text_content() or '').strip()
-            href = await link.get_attribute('href')
-            print(f'{i}: text="{text}", href="{href}"')
-        print('--- end of <a.pageLink> debug ---')
-        # Find and click the 'Visit Profile' button by text
-        visit_links = []
-        for link in links:
-            text = (await link.text_content() or "").strip().lower()
-            if text == "visit profile":
-                visit_links.append(link)
+        await _debug_print_page_link_elements(links)
+        visit_links = await _links_matching_visit_profile(links)
         if not visit_links:
             print(f"❌ No 'Visit Profile' link found for symbol {symbol}")
             return False
         await visit_links[0].click()
-        await page.wait_for_load_state('domcontentloaded')
+        await page.wait_for_load_state("domcontentloaded")
         print(f"✅ Clicked 'Visit Profile' for symbol {symbol}")
         return True
     except Exception as e:
@@ -424,42 +430,51 @@ async def _download_report_list_for_company(
     return all_success
 
 
+async def _try_process_company_pdfs_once(
+    browser: Browser, symbol: str, stop_flag_env: str
+) -> str:
+    """
+    Single attempt: open page, discover reports, download. Always closes the page.
+    Returns: 'stop' (abort pipeline), 'success', 'no_reports', 'downloads_failed'.
+    """
+    if Path(stop_flag_env).exists():
+        return "stop"
+    page: Optional[Page] = None
+    try:
+        page = await browser.new_page()
+        await page.mouse.move(random.randint(100, 500), random.randint(100, 300))
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        reports = await get_all_financial_reports(page, symbol)
+        if not reports:
+            return "no_reports"
+        all_ok = await _download_report_list_for_company(
+            page, symbol, reports, stop_flag_env
+        )
+        return "success" if all_ok else "downloads_failed"
+    finally:
+        if page is not None:
+            await page.close()
+
+
 async def process_company_with_retry(browser: Browser, symbol: str, max_retries: int = 3) -> bool:
     stop_flag_env = os.environ.get("STOP_FLAG_FILE", DEFAULT_STOP_PDFS_FLAG)
     for attempt in range(max_retries):
-        page: Optional[Page] = None
         try:
-            if Path(stop_flag_env).exists():
+            outcome = await _try_process_company_pdfs_once(browser, symbol, stop_flag_env)
+            if outcome == "stop":
                 print("🛑 Stop requested. Aborting company processing.")
                 return False
-            page = await browser.new_page()
-            await page.mouse.move(random.randint(100, 500), random.randint(100, 300))
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-            reports = await get_all_financial_reports(page, symbol)
-            if not reports:
-                await page.close()
-                page = None
-                if _company_retry_remaining(attempt, max_retries):
-                    print(f"🔄 Retrying {symbol} (attempt {attempt + 2}/{max_retries})...")
-                    await asyncio.sleep(random.uniform(2, 5))
-                    continue
-                return False
-            all_success = await _download_report_list_for_company(
-                page, symbol, reports, stop_flag_env
-            )
-            await page.close()
-            page = None
-            if all_success:
+            if outcome == "success":
                 return True
-            if _company_retry_remaining(attempt, max_retries):
-                print(f"🔄 Retrying {symbol} (attempt {attempt + 2}/{max_retries})...")
-                await asyncio.sleep(random.uniform(2, 5))
+            if not _company_retry_remaining(attempt, max_retries):
+                return False
+            print(f"🔄 Retrying {symbol} (attempt {attempt + 2}/{max_retries})...")
+            await asyncio.sleep(random.uniform(2, 5))
         except Exception as e:
             print(f"❌ Error processing {symbol} (attempt {attempt + 1}): {e}")
-            if page is not None:
-                await page.close()
-            if _company_retry_remaining(attempt, max_retries):
-                await asyncio.sleep(random.uniform(2, 5))
+            if not _company_retry_remaining(attempt, max_retries):
+                return False
+            await asyncio.sleep(random.uniform(2, 5))
     return False
 
 
