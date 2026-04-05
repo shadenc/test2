@@ -307,21 +307,31 @@ class RetainedEarningsExtractor:
             )
         return None
 
+    def _spire_scan_years_on_retained_row(
+        self, table, pdf_path: str, page_index: int, row_index: int
+    ) -> Optional[Dict]:
+        for year in self.target_years:
+            for col_index in range(table.GetColumnCount()):
+                cell_data = table.GetText(row_index, col_index).strip()
+                if str(year) not in cell_data:
+                    continue
+                found = self._spire_value_from_column(
+                    table, pdf_path, page_index, col_index, year
+                )
+                if found:
+                    return found
+        return None
+
     def _spire_scan_retained_row(self, table, pdf_path: str, page_index: int) -> Optional[Dict]:
         for row_index in range(table.GetRowCount()):
             first_col = table.GetText(row_index, 0).strip().lower()
             if first_col != RETAINED_EARNINGS_LABEL:
                 continue
-            for year in self.target_years:
-                for col_index in range(table.GetColumnCount()):
-                    cell_data = table.GetText(row_index, col_index).strip()
-                    if str(year) not in cell_data:
-                        continue
-                    found = self._spire_value_from_column(
-                        table, pdf_path, page_index, col_index, year
-                    )
-                    if found:
-                        return found
+            found = self._spire_scan_years_on_retained_row(
+                table, pdf_path, page_index, row_index
+            )
+            if found:
+                return found
         return None
 
     def extract_with_spire_pdf(self, pdf_path: str) -> Optional[Dict]:
@@ -373,17 +383,23 @@ class RetainedEarningsExtractor:
             )
         return None
 
+    def _camelot_scan_years_on_row(self, pdf_path: str, df) -> Optional[Dict]:
+        for year in self.target_years:
+            for col_idx, col_name in enumerate(df.columns):
+                if str(year) not in str(col_name):
+                    continue
+                found = self._camelot_try_year_column(pdf_path, df, year, col_idx)
+                if found:
+                    return found
+        return None
+
     def _camelot_scan_dataframe(self, pdf_path: str, df) -> Optional[Dict]:
         for _, row in df.iterrows():
             if RETAINED_EARNINGS_LABEL not in str(row.iloc[0]).lower():
                 continue
-            for year in self.target_years:
-                for col_idx, col_name in enumerate(df.columns):
-                    if str(year) not in str(col_name):
-                        continue
-                    found = self._camelot_try_year_column(pdf_path, df, year, col_idx)
-                    if found:
-                        return found
+            found = self._camelot_scan_years_on_row(pdf_path, df)
+            if found:
+                return found
         return None
 
     def extract_with_camelot(self, pdf_path: str) -> Optional[Dict]:

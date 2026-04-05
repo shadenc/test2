@@ -18,6 +18,7 @@ from src.api.evidence_api import (
     EMPTY_DISPLAY_AR,
     FLOW_CSV_RELPATH,
     MIME_XLSX,
+    MSG_FILE_NOT_FOUND,
     MSG_INTERNAL_ERROR,
     MSG_OWNERSHIP_UPDATED_OK,
     QUARTERLY_NET_PROFIT_RELPATH,
@@ -465,6 +466,268 @@ def _run_pdfs_pipeline_task(project_root: Path, downloader: Path, extractor: Pat
         pass
     logger.info("[Pipeline] ✅ Pipeline completed (download → extract → calculate → screenshots)")
 
+
+def _run_net_profit_scrape_background(project_root: Path) -> None:
+    """Background thread body for net profit scraper + reinvested recalculation."""
+    try:
+        logger.info("[NetProfit] Starting scraper...")
+        try:
+            net_stop_flag = project_root / RUNTIME_STOP_NET_FLAG
+            if net_stop_flag.exists():
+                net_stop_flag.unlink()
+        except Exception:
+            pass
+        try:
+            net_progress = project_root / RUNTIME_NET_PROGRESS_JSON
+            net_progress.parent.mkdir(parents=True, exist_ok=True)
+            with open(net_progress, "w", encoding="utf-8") as f:
+                json.dump({"status": "running", "processed": 0}, f)
+        except Exception:
+            pass
+        scraper = project_root / "src/scrapers/scrape_quarterly_net_profit.py"
+        env = os.environ.copy()
+        env.setdefault("STOP_FLAG_FILE", str(project_root / RUNTIME_STOP_NET_FLAG))
+        env.setdefault("PROGRESS_FILE", str(project_root / RUNTIME_NET_PROGRESS_JSON))
+        subprocess.run(
+            [sys.executable, str(scraper)],
+            cwd=str(project_root),
+            check=True,
+            text=True,
+            env=env,
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error("[NetProfit] Scraper failed: %s", e)
+        return
+    try:
+        logger.info("[NetProfit] Recalculating flows after net profit update...")
+        calc = project_root / SCRIPT_CALCULATE_REINVESTED
+        subprocess.run(
+            [sys.executable, str(calc)],
+            cwd=str(project_root),
+            check=True,
+            text=True,
+        )
+        logger.info("[NetProfit] ✅ Completed")
+    except subprocess.CalledProcessError as e:
+        logger.error("[NetProfit] Recalculation failed: %s", e)
+    finally:
+        try:
+            net_stop_flag = project_root / RUNTIME_STOP_NET_FLAG
+            if net_stop_flag.exists():
+                net_stop_flag.unlink()
+        except Exception:
+            pass
+
+
+def _correction_numeric_base(correct_value) -> float:
+    try:
+        return float(str(correct_value).replace(",", ""))
+    except Exception:
+        return 0.0
+
+
+def _update_or_append_retained_correction(
+    results: list, company_symbol: str, correct_value: str
+) -> None:
+    base_numeric = _correction_numeric_base(correct_value)
+    for entry in results:
+        if entry.get("company_symbol") != company_symbol:
+            continue
+        entry["value"] = correct_value
+        multiplier = entry.get("applied_multiplier", 1) or 1
+        entry["numeric_value"] = base_numeric * multiplier
+        entry["method"] = "manual_correction"
+        entry["confidence"] = "high"
+        entry["flag_for_review"] = False
+        return
+    results.append(
+        {
+            "company_symbol": company_symbol,
+            "value": correct_value,
+            "numeric_value": base_numeric,
+            "method": "manual_correction",
+            "confidence": "high",
+            "flag_for_review": False,
+            "success": True,
+        }
+    )
+
+
+def _append_retained_correction_log(
+    corrections_log: Path, company_symbol: str, correct_value: str, feedback: str
+) -> None:
+    try:
+        if corrections_log.exists():
+            with open(corrections_log, "r", encoding="utf-8") as f:
+                log = json.load(f)
+        else:
+            log = []
+        log.append(
+            {
+                "company_symbol": company_symbol,
+                "correct_value": correct_value,
+                "feedback": feedback,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+        with open(corrections_log, "w", encoding="utf-8") as f:
+            json.dump(log, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+_EXCEL_PREVIOUS_Q_LABEL = {"Q1": "2024Q4", "Q2": "2025Q1", "Q3": "2025Q2", "Q4": "2025Q3"}
+_EXCEL_CURRENT_Q_LABEL = {"Q1": "2025Q1", "Q2": "2025Q2", "Q3": "2025Q3", "Q4": "2025Q4"}
+
+
+def _build_flow_map_for_excel_export(flow_data: pd.DataFrame) -> dict:
+    flow_map: dict = {}
+    for _, row in flow_data.iterrows():
+        symbol = str(row.get("company_symbol", "")).strip()
+        quarter = str(row.get("quarter", "")).strip()
+        if not symbol or not quarter:
+            continue
+        flow_map.setdefault(symbol, {})
+        flow_map[symbol][quarter] = {
+            "previous_value": row.get("previous_value", ""),
+            "current_value": row.get("current_value", ""),
+            "flow": row.get("flow", ""),
+            "flow_formula": row.get("flow_formula", ""),
+            "year": row.get("year", ""),
+            "reinvested_earnings_flow": row.get("reinvested_earnings_flow", ""),
+            "net_profit_foreign_investor": row.get("net_profit_foreign_investor", ""),
+            "distributed_profits_foreign_investor": row.get(
+                "distributed_profits_foreign_investor", ""
+            ),
+        }
+    return flow_map
+
+
+def _load_net_profit_lookup(project_root: Path) -> dict:
+    net_profit_path = project_root / QUARTERLY_NET_PROFIT_RELPATH
+    out: dict = {}
+    if not net_profit_path.exists():
+        return out
+    with open(net_profit_path, "r", encoding="utf-8") as f:
+        net_profit_raw = json.load(f)
+    for company in net_profit_raw:
+        symbol = company.get("company_symbol")
+        if symbol:
+            out[symbol] = company
+    return out
+
+
+def _apply_custom_date_to_quarter_filter(
+    quarter_filter: str, custom_date: str | None
+) -> tuple[str, str | None]:
+    """
+    Returns (quarter_filter, error_message).
+    error_message is set if custom_date is invalid; quarter_filter unchanged on error.
+    """
+    if not custom_date:
+        return quarter_filter, None
+    try:
+        custom_date_obj = datetime.strptime(custom_date, "%Y-%m-%d")
+        custom_year = custom_date_obj.year
+        custom_month = custom_date_obj.month
+        if custom_month <= 3:
+            custom_quarter = "Q1"
+        elif custom_month <= 6:
+            custom_quarter = "Q2"
+        elif custom_month <= 9:
+            custom_quarter = "Q3"
+        else:
+            custom_quarter = "Q4"
+        logger.info(
+            "Custom date export maps to quarter=%s year=%s",
+            custom_quarter,
+            custom_year,
+        )
+        return custom_quarter, None
+    except ValueError:
+        return quarter_filter, "Invalid custom date format. Use YYYY-MM-DD"
+
+
+def _merged_excel_row_for_company(
+    ownership_row: dict,
+    flow_map: dict,
+    net_profit_data: dict,
+    quarter_filter: str,
+) -> dict:
+    symbol = str(ownership_row.get("symbol", "")).strip()
+    flow_info = flow_map.get(symbol, {})
+    net_profit_info = net_profit_data.get(symbol, {})
+    quarter_data = flow_info.get(quarter_filter, {})
+    net_profit_value = EMPTY_DISPLAY_AR
+    if net_profit_info and "quarterly_net_profit" in net_profit_info:
+        quarter_key = f"{quarter_filter} 2025"
+        qnp = net_profit_info["quarterly_net_profit"]
+        if quarter_key in qnp:
+            net_profit_value = qnp[quarter_key]
+    previous_quarter = _EXCEL_PREVIOUS_Q_LABEL.get(quarter_filter, "")
+    current_quarter = _EXCEL_CURRENT_Q_LABEL.get(quarter_filter, "")
+    return {
+        "رمز الشركة": symbol,
+        "الشركة": ownership_row.get("company_name", ""),
+        "ملكية جميع المستثمرين الأجانب": ownership_row.get("foreign_ownership", ""),
+        "الملكية الحالية": ownership_row.get("max_allowed", ""),
+        "ملكية المستثمر الاستراتيجي الأجنبي": ownership_row.get("investor_limit", ""),
+        f"الأرباح المبقاة للربع السابق ({previous_quarter})": format_excel_cell_display(
+            quarter_data.get("previous_value", "")
+        ),
+        f"الأرباح المبقاة للربع الحالي ({current_quarter})": format_excel_cell_display(
+            quarter_data.get("current_value", "")
+        ),
+        "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)": format_excel_cell_display(
+            quarter_data.get("flow", "")
+        ),
+        "تدفق الأرباح المبقاة للمستثمر الأجنبي": format_excel_cell_display(
+            quarter_data.get("reinvested_earnings_flow", "")
+        ),
+        "صافي الربح": net_profit_value,
+        "صافي الربح للمستثمر الأجنبي": format_excel_cell_display(
+            quarter_data.get("net_profit_foreign_investor", "")
+        ),
+        "الأرباح الموزعة للمستثمر الأجنبي": format_excel_cell_display(
+            quarter_data.get("distributed_profits_foreign_investor", "")
+        ),
+    }
+
+
+def _export_excel_download_filename(
+    custom_date: str | None, custom_filename: str | None, quarter_filter: str
+) -> str:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if custom_date:
+        if custom_filename:
+            return f"{custom_filename}_{custom_date}_{ts}.xlsx"
+        return f"financial_analysis_custom_{custom_date}_{ts}.xlsx"
+    if custom_filename:
+        return f"{custom_filename}_{quarter_filter}_2025_{ts}.xlsx"
+    return f"financial_analysis_{quarter_filter}_2025_{ts}.xlsx"
+
+
+def _load_flow_csv_after_recalc(project_root: Path) -> tuple[pd.DataFrame | None, str | None]:
+    try:
+        recalc_result = subprocess.run(
+            [sys.executable, SCRIPT_CALCULATE_REINVESTED],
+            capture_output=True,
+            text=True,
+            cwd=str(project_root),
+        )
+        if recalc_result.returncode != 0:
+            logger.warning("Recalculation had issues: %s", recalc_result.stderr)
+        csv_path = project_root / FLOW_CSV_RELPATH
+        if not csv_path.exists():
+            return None, "Retained earnings flow data file not found"
+        flow_data = pd.read_csv(csv_path)
+        logger.info("Loaded updated flow data with %s rows for export", len(flow_data))
+        return flow_data, None
+    except Exception as e:
+        logger.error("Error regenerating data for export: %s", e)
+        return None, f"Failed to update data for export: {e!s}"
+
+
 @bp.route('/api/run_pdfs_pipeline', methods=['POST'])
 def run_pdfs_pipeline():
     """
@@ -493,55 +756,20 @@ def run_net_profit_scrape():
     """
     try:
         project_root = _ctx().project_root
-        scraper = project_root / 'src/scrapers/scrape_quarterly_net_profit.py'
+        scraper = project_root / "src/scrapers/scrape_quarterly_net_profit.py"
         if not scraper.exists():
             return jsonify({"status": "error", "message": "Net profit scraper not found"}), 404
 
-        def _run_net_profit_task():
-            try:
-                logger.info("[NetProfit] Starting scraper...")
-                # Clear any stale stop flag
-                try:
-                    net_stop_flag = project_root / RUNTIME_STOP_NET_FLAG
-                    if net_stop_flag.exists():
-                        net_stop_flag.unlink()
-                except Exception:
-                    pass
-                # Initialize progress file as running
-                try:
-                    net_progress = project_root / RUNTIME_NET_PROGRESS_JSON
-                    net_progress.parent.mkdir(parents=True, exist_ok=True)
-                    with open(net_progress, 'w', encoding='utf-8') as f:
-                        json.dump({"status": "running", "processed": 0}, f)
-                except Exception:
-                    pass
-                env = os.environ.copy()
-                env.setdefault('STOP_FLAG_FILE', str(project_root / RUNTIME_STOP_NET_FLAG))
-                env.setdefault('PROGRESS_FILE', str(project_root / RUNTIME_NET_PROGRESS_JSON))
-                subprocess.run([sys.executable, str(scraper)], cwd=str(project_root), check=True, text=True, env=env)
-            except subprocess.CalledProcessError as e:
-                logger.error(f"[NetProfit] Scraper failed: {e}")
-                return
-            try:
-                logger.info("[NetProfit] Recalculating flows after net profit update...")
-                calc = project_root / SCRIPT_CALCULATE_REINVESTED
-                subprocess.run([sys.executable, str(calc)], cwd=str(project_root), check=True, text=True)
-                logger.info("[NetProfit] ✅ Completed")
-            except subprocess.CalledProcessError as e:
-                logger.error(f"[NetProfit] Recalculation failed: {e}")
-            finally:
-                # Ensure stop flag cleared at end
-                try:
-                    net_stop_flag = project_root / RUNTIME_STOP_NET_FLAG
-                    if net_stop_flag.exists():
-                        net_stop_flag.unlink()
-                except Exception:
-                    pass
-
-        threading.Thread(target=_run_net_profit_task, daemon=True).start()
-        return jsonify({"status": "accepted", "message": "Net profit scraping started in background"}), 202
+        threading.Thread(
+            target=_run_net_profit_scrape_background,
+            args=(project_root,),
+            daemon=True,
+        ).start()
+        return jsonify(
+            {"status": "accepted", "message": "Net profit scraping started in background"}
+        ), 202
     except Exception as e:
-        logger.error(f"Failed to start net profit scraper: {e}")
+        logger.error("Failed to start net profit scraper: %s", e)
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @bp.route('/api/pdfs/status', methods=['GET'])
@@ -631,94 +859,53 @@ def stop_net_profit():
 @bp.route('/api/correct_retained_earnings', methods=['POST'])
 def correct_retained_earnings():
     data = request.json
-    company_symbol = data.get('company_symbol')
-    correct_value = data.get('correct_value')
-    feedback = data.get('feedback', '')
+    company_symbol = data.get("company_symbol")
+    correct_value = data.get("correct_value")
+    feedback = data.get("feedback", "")
     if not company_symbol or not correct_value:
-        return jsonify({'error': 'Missing company_symbol or correct_value'}), 400
+        return jsonify({"error": "Missing company_symbol or correct_value"}), 400
 
-    # Load retained earnings results
     results_file = _ctx().project_root / "data/results/retained_earnings_results.json"
     try:
-        with open(results_file, 'r', encoding='utf-8') as f:
+        with open(results_file, "r", encoding="utf-8") as f:
             results = json.load(f)
     except Exception as e:
-        return jsonify({'error': f'Failed to load results: {e}'}), 500
+        return jsonify({"error": f"Failed to load results: {e}"}), 500
 
-    # Update the value for the company
-    updated = False
-    for entry in results:
-        if entry.get('company_symbol') == company_symbol:
-            # Keep raw user-entered value (text)
-            entry['value'] = correct_value
-            # Apply multiplier based on detected unit (default 1)
-            try:
-                base_numeric = float(str(correct_value).replace(',', ''))
-            except Exception:
-                base_numeric = 0.0
-            multiplier = entry.get('applied_multiplier', 1) or 1
-            entry['numeric_value'] = base_numeric * multiplier
-            entry['method'] = 'manual_correction'
-            entry['confidence'] = 'high'
-            entry['flag_for_review'] = False
-            updated = True
-            break
-    if not updated:
-        # If not found, add a new entry
-        try:
-            base_numeric = float(str(correct_value).replace(',', ''))
-        except Exception:
-            base_numeric = 0.0
-        results.append({
-            'company_symbol': company_symbol,
-            'value': correct_value,
-            'numeric_value': base_numeric,  # no unit info for new, leave as-is
-            'method': 'manual_correction',
-            'confidence': 'high',
-            'flag_for_review': False,
-            'success': True
-        })
-    # Save back
-    with open(results_file, 'w', encoding='utf-8') as f:
+    _update_or_append_retained_correction(results, company_symbol, correct_value)
+    with open(results_file, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 
-    # Log the correction
-    corrections_log = _ctx().project_root / "data/results/corrections_log.json"
-    try:
-        if corrections_log.exists():
-            with open(corrections_log, 'r', encoding='utf-8') as f:
-                log = json.load(f)
-        else:
-            log = []
-        log.append({
-            'company_symbol': company_symbol,
-            'correct_value': correct_value,
-            'feedback': feedback,
-            'timestamp': datetime.now().isoformat()
-        })
-        with open(corrections_log, 'w', encoding='utf-8') as f:
-            json.dump(log, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        pass  # Don't block on logging
+    _append_retained_correction_log(
+        _ctx().project_root / "data/results/corrections_log.json",
+        company_symbol,
+        correct_value,
+        feedback,
+    )
 
-    # Trigger recalculation
     try:
-        subprocess.run([sys.executable, str(_ctx().project_root / SCRIPT_CALCULATE_REINVESTED)], check=True)
+        subprocess.run(
+            [sys.executable, str(_ctx().project_root / SCRIPT_CALCULATE_REINVESTED)],
+            check=True,
+        )
     except Exception as e:
-        return jsonify({'error': f'Correction saved, but recalculation failed: {e}'}), 500
+        return jsonify({"error": f"Correction saved, but recalculation failed: {e}"}), 500
 
-    # Load updated CSV and return the new values for this company
     csv_file = _ctx().project_root / "data/results/reinvested_earnings_results.csv"
     try:
         df = pd.read_csv(csv_file)
-        row = df[df['company_symbol'] == int(company_symbol)]
+        row = df[df["company_symbol"] == int(company_symbol)]
         if not row.empty:
-            result = row.iloc[0].to_dict()
-            return jsonify({'status': 'success', 'updated': result})
-        else:
-            return jsonify({'status': 'success', 'updated': None})
+            return jsonify({"status": "success", "updated": row.iloc[0].to_dict()})
+        return jsonify({"status": "success", "updated": None})
     except Exception as e:
-        return jsonify({'status': 'success', 'updated': None, 'warning': f'Correction saved, but failed to load updated CSV: {e}'})
+        return jsonify(
+            {
+                "status": "success",
+                "updated": None,
+                "warning": f"Correction saved, but failed to load updated CSV: {e}",
+            }
+        )
 
 @bp.route('/api/correct_field_value', methods=['POST'])
 def correct_field_value():
@@ -853,201 +1040,52 @@ def export_excel():
     Export dashboard table data to Excel file for a specific quarter or custom date
     """
     try:
-        import sys
-        from pathlib import Path
-        import json
-        from datetime import datetime
-        
-        # Get parameters from query string
-        quarter_filter = request.args.get('quarter', 'Q1')
-        custom_date = request.args.get('custom_date', None)
-        custom_filename = request.args.get('custom_filename', None)
-        
-        # Add project root to Python path
+        quarter_filter = request.args.get("quarter", "Q1")
+        custom_date = request.args.get("custom_date", None)
+        custom_filename = request.args.get("custom_filename", None)
         project_root = _ctx().project_root
         sys.path.insert(0, str(project_root))
-        
         from src.utils.export_to_excel import ExcelExporter
-        import pandas as pd
-        
-        # Create exporter
-        exporter = ExcelExporter()
-        
-        # Load foreign ownership data (JSON)
+
         ownership_json_path = project_root / "data/ownership/foreign_ownership_data.json"
         if not ownership_json_path.exists():
             return jsonify({"error": "Ownership data file not found"}), 404
-        
-        with open(ownership_json_path, 'r', encoding='utf-8') as f:
+        with open(ownership_json_path, "r", encoding="utf-8") as f:
             ownership_data = json.load(f)
-        
-        # Instead of loading static CSV, regenerate data with corrections applied
-        # This ensures Excel export shows same data as dashboard
-        logger.info("Regenerating flow data with corrections for Excel export...")
-        try:
-            # Trigger recalculation to get latest corrected data
-            recalc_result = subprocess.run([sys.executable, SCRIPT_CALCULATE_REINVESTED], 
-                                         capture_output=True, text=True, cwd=str(project_root))
-            if recalc_result.returncode != 0:
-                logger.warning(f"Recalculation had issues: {recalc_result.stderr}")
-            
-            # Now load the updated CSV
-            csv_path = project_root / FLOW_CSV_RELPATH
-            if not csv_path.exists():
-                return jsonify({"error": "Retained earnings flow data file not found"}), 404
-            
-            flow_data = pd.read_csv(csv_path)
-            logger.info(f"Loaded updated flow data with {len(flow_data)} rows for export")
-        except Exception as e:
-            logger.error(f"Error regenerating data for export: {e}")
-            return jsonify({"error": f"Failed to update data for export: {str(e)}"}), 500
-        
-        # Create a map of flow data by symbol and quarter
-        flow_map = {}
-        for _, row in flow_data.iterrows():
-            symbol = str(row.get('company_symbol', '')).strip()
-            quarter = str(row.get('quarter', '')).strip()
-            if symbol and quarter:
-                if symbol not in flow_map:
-                    flow_map[symbol] = {}
-                flow_map[symbol][quarter] = {
-                    'previous_value': row.get('previous_value', ''),
-                    'current_value': row.get('current_value', ''),
-                    'flow': row.get('flow', ''),
-                    'flow_formula': row.get('flow_formula', ''),
-                    'year': row.get('year', ''),
-                    'reinvested_earnings_flow': row.get('reinvested_earnings_flow', ''),
-                    'net_profit_foreign_investor': row.get('net_profit_foreign_investor', ''),
-                    'distributed_profits_foreign_investor': row.get('distributed_profits_foreign_investor', '')
-                }
-        
-        # Load net profit data
-        net_profit_path = project_root / QUARTERLY_NET_PROFIT_RELPATH
-        net_profit_data = {}
-        if net_profit_path.exists():
-            with open(net_profit_path, 'r', encoding='utf-8') as f:
-                net_profit_raw = json.load(f)
-                for company in net_profit_raw:
-                    symbol = company.get('company_symbol')
-                    if symbol:
-                        net_profit_data[symbol] = company
-        
-        # Handle custom date export
-        if custom_date:
-            try:
-                # Parse custom date
-                custom_date_obj = datetime.strptime(custom_date, '%Y-%m-%d')
-                custom_year = custom_date_obj.year
-                custom_month = custom_date_obj.month
-                
-                # Determine quarter from custom date
-                if custom_month in [1, 2, 3]:
-                    custom_quarter = "Q1"
-                elif custom_month in [4, 5, 6]:
-                    custom_quarter = "Q2"
-                elif custom_month in [7, 8, 9]:
-                    custom_quarter = "Q3"
-                else:  # 10, 11, 12
-                    custom_quarter = "Q4"
 
-                # Override quarter filter with custom date quarter
-                quarter_filter = custom_quarter
-                logger.info(
-                    "Custom date export maps to quarter=%s year=%s",
-                    custom_quarter,
-                    custom_year,
-                )
-                
-            except ValueError:
-                return jsonify({"error": "Invalid custom date format. Use YYYY-MM-DD"}), 400
-        
-        # Merge the data for the selected quarter only
-        merged_data = []
-        for ownership_row in ownership_data:
-            symbol = str(ownership_row.get('symbol', '')).strip()
-            flow_info = flow_map.get(symbol, {})
-            net_profit_info = net_profit_data.get(symbol, {})
-            
-            # Only create row for the selected quarter
-            quarter_data = flow_info.get(quarter_filter, {})
-            
-            # Get net profit for this quarter
-            net_profit_value = EMPTY_DISPLAY_AR
-            if net_profit_info and 'quarterly_net_profit' in net_profit_info:
-                quarter_key = f"{quarter_filter} 2025"
-                if quarter_key in net_profit_info['quarterly_net_profit']:
-                    net_profit_value = net_profit_info['quarterly_net_profit'][quarter_key]
-            
-            # Get previous quarter for header
-            previous_quarter = ""
-            if quarter_filter == "Q1":
-                previous_quarter = "2024Q4"  # This refers to Annual 2024 statement
-            elif quarter_filter == "Q2":
-                previous_quarter = "2025Q1"
-            elif quarter_filter == "Q3":
-                previous_quarter = "2025Q2"
-            elif quarter_filter == "Q4":
-                previous_quarter = "2025Q3"
-            
-            # Get current quarter for header
-            current_quarter = ""
-            if quarter_filter == "Q1":
-                current_quarter = "2025Q1"
-            elif quarter_filter == "Q2":
-                current_quarter = "2025Q2"
-            elif quarter_filter == "Q3":
-                current_quarter = "2025Q3"
-            elif quarter_filter == "Q4":
-                current_quarter = "2025Q4"
-            
-            merged_row = {
-                'رمز الشركة': symbol,
-                'الشركة': ownership_row.get('company_name', ''),
-                'ملكية جميع المستثمرين الأجانب': ownership_row.get('foreign_ownership', ''),
-                'الملكية الحالية': ownership_row.get('max_allowed', ''),
-                'ملكية المستثمر الاستراتيجي الأجنبي': ownership_row.get('investor_limit', ''),
-                f'الأرباح المبقاة للربع السابق ({previous_quarter})': format_excel_cell_display(quarter_data.get('previous_value', '')),
-                f'الأرباح المبقاة للربع الحالي ({current_quarter})': format_excel_cell_display(quarter_data.get('current_value', '')),
-                'حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)': format_excel_cell_display(quarter_data.get('flow', '')),
-                'تدفق الأرباح المبقاة للمستثمر الأجنبي': format_excel_cell_display(quarter_data.get('reinvested_earnings_flow', '')),
-                'صافي الربح': net_profit_value,
-                'صافي الربح للمستثمر الأجنبي': format_excel_cell_display(quarter_data.get('net_profit_foreign_investor', '')),
-                'الأرباح الموزعة للمستثمر الأجنبي': format_excel_cell_display(quarter_data.get('distributed_profits_foreign_investor', ''))
-            }
-            merged_data.append(merged_row)
-        
-        # Convert to DataFrame
+        logger.info("Regenerating flow data with corrections for Excel export...")
+        flow_data, load_err = _load_flow_csv_after_recalc(project_root)
+        if load_err:
+            return jsonify({"error": load_err}), 500
+
+        flow_map = _build_flow_map_for_excel_export(flow_data)
+        net_profit_data = _load_net_profit_lookup(project_root)
+        quarter_filter, date_err = _apply_custom_date_to_quarter_filter(
+            quarter_filter, custom_date
+        )
+        if date_err:
+            return jsonify({"error": date_err}), 400
+
+        merged_data = [
+            _merged_excel_row_for_company(row, flow_map, net_profit_data, quarter_filter)
+            for row in ownership_data
+        ]
         data = pd.DataFrame(merged_data)
-        
-        # Export dashboard table
-        output_path = exporter.export_dashboard_table(data)
-        
-        if output_path:
-            # Generate filename based on whether it's custom date or quarter
-            if custom_date:
-                if custom_filename:
-                    filename = f"{custom_filename}_{custom_date}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                else:
-                    filename = f"financial_analysis_custom_{custom_date}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            else:
-                if custom_filename:
-                    filename = f"{custom_filename}_{quarter_filter}_2025_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                else:
-                    filename = f"financial_analysis_{quarter_filter}_2025_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            
-            # Return the file for download
-            return send_file(
-                output_path,
-                as_attachment=True,
-                download_name=filename,
-                mimetype=MIME_XLSX
-            )
-        else:
+        output_path = ExcelExporter().export_dashboard_table(data)
+        if not output_path:
             return jsonify({"error": "Failed to create Excel file"}), 500
-            
+        filename = _export_excel_download_filename(
+            custom_date, custom_filename, quarter_filter
+        )
+        return send_file(
+            output_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype=MIME_XLSX,
+        )
     except Exception as e:
-        logger.error(f"Error exporting to Excel: {e}")
-        return jsonify({"error": f"Export failed: {str(e)}"}), 500
+        logger.error("Error exporting to Excel: %s", e)
+        return jsonify({"error": f"Export failed: {e!s}"}), 500
 
 @bp.route('/api/update_ownership', methods=['POST'])
 def update_ownership_data():

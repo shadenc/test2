@@ -1009,9 +1009,9 @@ function App() {
   // Background jobs state
   const [pdfJobStatus, setPdfJobStatus] = useState({ status: 'idle' });
   const [netJobStatus, setNetJobStatus] = useState({ status: 'idle' });
-  // Busy flags: only setters are used (passed to UpdateJobsDialog); values are not read here.
-  const [isPdfRunning, setIsPdfRunning] = useState(false); // eslint-disable-line no-unused-vars
-  const [isNetRunning, setIsNetRunning] = useState(false); // eslint-disable-line no-unused-vars
+  // Busy flags: only setters are used (passed to UpdateJobsDialog).
+  const setIsPdfRunning = useState(false)[1];
+  const setIsNetRunning = useState(false)[1];
   const [pdfPollId, setPdfPollId] = useState(null);
   const [netPollId, setNetPollId] = useState(null);
   const [pdfProgressOpen, setPdfProgressOpen] = useState(false);

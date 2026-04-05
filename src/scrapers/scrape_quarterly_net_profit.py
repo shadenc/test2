@@ -7,6 +7,7 @@ Scrapes quarterly net profit data from company financial information pages
 
 import asyncio
 import json
+import os
 import random
 from datetime import datetime
 from pathlib import Path
@@ -513,126 +514,142 @@ async def process_company_with_retry(browser: Browser, symbol: str, max_retries:
             await asyncio.sleep(random.uniform(2, 5))
     return None
 
+
+def _net_profit_progress_and_stop_paths() -> tuple[Path, Path]:
+    progress_path = Path(os.environ.get("PROGRESS_FILE", "data/runtime/net_profit_progress.json"))
+    stop_flag = Path(os.environ.get("STOP_FLAG_FILE", "data/runtime/stop_net_profit.flag"))
+    stop_flag.parent.mkdir(parents=True, exist_ok=True)
+    return progress_path, stop_flag
+
+
+def _env_limit_companies() -> int:
+    try:
+        return int(os.environ.get("LIMIT_COMPANIES", "0"))
+    except Exception:
+        return 0
+
+
+async def _load_existing_net_profit_map() -> Dict[str, Dict]:
+    existing_map: Dict[str, Dict] = {}
+    if not OUTPUT_FILE.exists():
+        return existing_map
+    try:
+        existing_list = await _async_read_json_file(OUTPUT_FILE)
+        for item in existing_list:
+            sym = str(item.get("company_symbol", "")).strip()
+            if sym:
+                existing_map[sym] = item
+        print(f"🔄 Loaded existing net profit data for {len(existing_map)} companies to merge")
+    except Exception as e:
+        print(f"⚠️ Failed to load existing net profit file, starting fresh merge: {e}")
+    return existing_map
+
+
+async def _write_net_profit_progress(
+    progress_path: Path,
+    *,
+    status: str,
+    processed: int,
+    success_count: int,
+    failed_count: int,
+    current_symbol: Optional[str] = None,
+) -> None:
+    payload: Dict = {
+        "status": status,
+        "processed": processed,
+        "success": success_count,
+        "failed": failed_count,
+    }
+    if current_symbol is not None:
+        payload["current_symbol"] = current_symbol
+    try:
+        await _async_write_json_file(progress_path, payload)
+    except Exception:
+        pass
+
+
+async def _scrape_one_company_and_merge(
+    browser: Browser, symbol: str, index: int, total: int, existing_map: Dict[str, Dict]
+) -> bool:
+    print(f"\n{'='*60}")
+    print(f"📊 Processing {symbol} ({index}/{total})")
+    print(f"{'='*60}")
+    result = await process_company_with_retry(browser, symbol)
+    if not result:
+        print(f"❌ Failed to process {symbol}")
+        return False
+    print(f"✅ Successfully processed {symbol}")
+    existing_map[str(symbol)] = result
+    try:
+        await _async_write_json_file(OUTPUT_FILE, list(existing_map.values()))
+        print(f"💾 Incrementally updated: {OUTPUT_FILE}")
+    except Exception as e:
+        print(f"⚠️ Failed to write incremental update: {e}")
+    return True
+
+
+def _print_net_profit_summary(success_count: int, failed_count: int) -> None:
+    print(f"\n{'='*60}")
+    print("📊 SCRAPING SUMMARY")
+    print(f"{'='*60}")
+    print(f"✅ Successful: {success_count}")
+    print(f"❌ Failed: {failed_count}")
+    denom = success_count + failed_count
+    rate = (success_count / denom * 100) if denom > 0 else 0.0
+    print(f"📈 Success Rate: {rate:.1f}%")
+    print(f"💾 Data saved to: {OUTPUT_FILE}")
+
+
 async def scrape_all_companies_net_profit():
     """Scrape quarterly net profit data for all companies."""
-    # Get company symbols
     companies = get_company_symbols_from_json()
-    
     if not companies:
         print("❌ No company symbols found. Please ensure foreign_ownership_data.json exists.")
         return
-    
+
     print(f"📋 Found {len(companies)} companies to process")
-    
-    # Setup browser
     playwright, browser, _ = await setup_stealth_browser()
-    
     try:
-        # Load existing data to merge into (map by company_symbol)
-        existing_map = {}
-        if OUTPUT_FILE.exists():
-            try:
-                existing_list = await _async_read_json_file(OUTPUT_FILE)
-                for item in existing_list:
-                    sym = str(item.get("company_symbol", "")).strip()
-                    if sym:
-                        existing_map[sym] = item
-                print(f"🔄 Loaded existing net profit data for {len(existing_map)} companies to merge")
-            except Exception as e:
-                print(f"⚠️ Failed to load existing net profit file, starting fresh merge: {e}")
-                existing_map = {}
-        
+        existing_map = await _load_existing_net_profit_map()
+        progress_path, stop_flag = _net_profit_progress_and_stop_paths()
         success_count = 0
         failed_count = 0
-        # progress reporting
-        import os
-        from pathlib import Path
-        progress_path = Path(os.environ.get("PROGRESS_FILE", "data/runtime/net_profit_progress.json"))
         processed = 0
-        
-        # Stop flag support
-        from pathlib import Path
-        import os
-        stop_flag = Path(os.environ.get("STOP_FLAG_FILE", "data/runtime/stop_net_profit.flag"))
-        stop_flag.parent.mkdir(parents=True, exist_ok=True)
+        limit = _env_limit_companies()
+        n = len(companies)
 
         for i, symbol in enumerate(companies, 1):
             if stop_flag.exists():
                 print("🛑 Stop requested. Ending net profit scraping early.")
                 break
-            print(f"\n{'='*60}")
-            print(f"📊 Processing {symbol} ({i}/{len(companies)})")
-            print(f"{'='*60}")
-            
-            result = await process_company_with_retry(browser, symbol)
-            
-            if result:
-                success_count += 1
-                print(f"✅ Successfully processed {symbol}")
-                # Merge into existing map
-                existing_map[str(symbol)] = result
-                # Write incrementally so partial runs persist
-                try:
-                    await _async_write_json_file(OUTPUT_FILE, list(existing_map.values()))
-                    print(f"💾 Incrementally updated: {OUTPUT_FILE}")
-                except Exception as e:
-                    print(f"⚠️ Failed to write incremental update: {e}")
-            else:
-                failed_count += 1
-                print(f"❌ Failed to process {symbol}")
+            ok = await _scrape_one_company_and_merge(browser, symbol, i, n, existing_map)
+            success_count += 1 if ok else 0
+            failed_count += 0 if ok else 1
             processed += 1
-            # write progress
-            try:
-                await _async_write_json_file(
-                    progress_path,
-                    {
-                        "status": "running",
-                        "processed": processed,
-                        "success": success_count,
-                        "failed": failed_count,
-                        "current_symbol": symbol,
-                    },
-                )
-            except Exception:
-                pass
-            
-            # Optional limit for safety (also enforced by LIMIT_COMPANIES)
-            try:
-                limit = int(os.environ.get("LIMIT_COMPANIES", "0"))
-            except Exception:
-                limit = 0
+            await _write_net_profit_progress(
+                progress_path,
+                status="running",
+                processed=processed,
+                success_count=success_count,
+                failed_count=failed_count,
+                current_symbol=symbol,
+            )
             if limit and i >= limit:
                 print(f"\n🛑 Stopping after {limit} companies as requested")
                 break
-            
-            # Add delay between companies
-            if i < len(companies) and i < 10:
+            if i < n and i < 10:
                 delay = random.uniform(3, 7)
                 print(f"⏳ Waiting {delay:.1f} seconds before next company...")
                 await asyncio.sleep(delay)
-        
-        # Summary
-        print(f"\n{'='*60}")
-        print("📊 SCRAPING SUMMARY")
-        print(f"{'='*60}")
-        print(f"✅ Successful: {success_count}")
-        print(f"❌ Failed: {failed_count}")
-        print(f"📈 Success Rate: {(success_count/(success_count+failed_count)*100) if (success_count+failed_count)>0 else 0:.1f}%")
-        print(f"💾 Data saved to: {OUTPUT_FILE}")
-        # mark done
-        try:
-            await _async_write_json_file(
-                progress_path,
-                {
-                    "status": "completed",
-                    "processed": processed,
-                    "success": success_count,
-                    "failed": failed_count,
-                },
-            )
-        except Exception:
-            pass
-        
+
+        _print_net_profit_summary(success_count, failed_count)
+        await _write_net_profit_progress(
+            progress_path,
+            status="completed",
+            processed=processed,
+            success_count=success_count,
+            failed_count=failed_count,
+        )
     finally:
         await browser.close()
         await playwright.stop()
