@@ -255,6 +255,29 @@ class QuarterlyUpdateOrchestrator:
             await playwright.stop()
         
         return results
+
+    async def _update_net_profit_for_symbol(
+        self, browser: Browser, symbol: str, existing_quarters: Set[str]
+    ) -> List[str]:
+        new_data = await process_net_profit_company(browser, symbol)
+        if not new_data:
+            logger.warning(f"⚠️  Failed to get net profit data for {symbol}")
+            return []
+
+        quarterly_data = new_data.get("quarterly_net_profit", {})
+        new_quarters = [
+            quarter
+            for quarter, value in quarterly_data.items()
+            if quarter not in existing_quarters and value is not None
+        ]
+
+        if not new_quarters:
+            logger.info(f"✅ {symbol}: Net profit data already up-to-date")
+            return []
+
+        logger.info(f"📈 {symbol}: New quarters: {new_quarters}")
+        await self._update_net_profit_file(symbol, new_data)
+        return new_quarters
     
     async def update_net_profit_data(self, symbols: List[str]) -> Dict[str, List[str]]:
         """Update net profit data for companies, only scraping new quarters."""
@@ -273,30 +296,9 @@ class QuarterlyUpdateOrchestrator:
                 existing_quarters = self._check_existing_net_profit_data(symbol)
                 logger.info(f"📁 Existing net profit data for {symbol}: {existing_quarters}")
                 
-                # Process company to get new data
-                new_data = await process_net_profit_company(browser, symbol)
-                
-                if new_data:
-                    # Check what's new
-                    new_quarters = []
-                    quarterly_data = new_data.get("quarterly_net_profit", {})
-                    
-                    for quarter, value in quarterly_data.items():
-                        if quarter not in existing_quarters and value is not None:
-                            new_quarters.append(quarter)
-                    
-                    if new_quarters:
-                        logger.info(f"📈 {symbol}: New quarters: {new_quarters}")
-                        
-                        # Update the existing data file
-                        await self._update_net_profit_file(symbol, new_data)
-                        results[symbol] = new_quarters
-                    else:
-                        logger.info(f"✅ {symbol}: Net profit data already up-to-date")
-                        results[symbol] = []
-                else:
-                    logger.warning(f"⚠️  Failed to get net profit data for {symbol}")
-                    results[symbol] = []
+                results[symbol] = await self._update_net_profit_for_symbol(
+                    browser, symbol, existing_quarters
+                )
                 
                 # Add delay between companies
                 if i < len(symbols):

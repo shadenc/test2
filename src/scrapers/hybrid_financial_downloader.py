@@ -256,49 +256,65 @@ async def _debug_print_table_rows(rows) -> None:
     print("--- End table debug ---")
 
 
+def _row_cell_matches_statement_type(cell_text: str, stype: str) -> bool:
+    return stype in cell_text or any(t in cell_text for t in ("report", "statement"))
+
+
+async def _find_table_row_for_statement_type(rows, stype: str):
+    for r in rows:
+        first_cell = await r.query_selector("td")
+        if not first_cell:
+            continue
+        cell_text = (await first_cell.text_content() or "").strip().lower()
+        if _row_cell_matches_statement_type(cell_text, stype):
+            print(f"Found row for {stype}: '{cell_text}'")
+            return r
+    return None
+
+
+async def _pdf_links_for_statement_row(
+    row, stype: str, symbol: str, years: List[int]
+) -> List[Tuple[str, int, str]]:
+    found: List[Tuple[str, int, str]] = []
+    cells = await row.query_selector_all("td")
+    print(f"Row for {stype} has {len(cells)} cells")
+    normalized = stype.lower().strip()
+    for i, year in enumerate(years):
+        cell_index = i + 1
+        if cell_index >= len(cells):
+            continue
+        cell = cells[cell_index]
+        pdf_link = await cell.query_selector("a[href$='.pdf']")
+        if not pdf_link:
+            continue
+        pdf_url = await pdf_link.get_attribute("href")
+        if not pdf_url:
+            continue
+        print(f"🎯 Found {normalized.upper()} PDF URL for {symbol} {year}: {pdf_url}")
+        found.append((normalized, year, pdf_url))
+    return found
+
+
 async def _collect_pdf_links_for_statement_types(
-    page: Page, symbol: str, rows, years: List[int]
+    symbol: str, rows, years: List[int]
 ) -> List[Tuple[str, int, str]]:
     statement_types = ["annual", "q1", "q2", "q3", "q4"]
     found_reports: List[Tuple[str, int, str]] = []
     for stype in statement_types:
-        row = None
-        for r in rows:
-            first_cell = await r.query_selector("td")
-            if not first_cell:
-                continue
-            cell_text = (await first_cell.text_content() or "").strip().lower()
-            if stype in cell_text or any(t in cell_text for t in ["report", "statement"]):
-                row = r
-                print(f"Found row for {stype}: '{cell_text}'")
-                break
+        row = await _find_table_row_for_statement_type(rows, stype)
         if not row:
             print(f"No '{stype}' row found in table.")
             continue
-        cells = await row.query_selector_all("td")
-        print(f"Row for {stype} has {len(cells)} cells")
-        for i, year in enumerate(years):
-            cell_index = i + 1
-            if cell_index >= len(cells):
-                continue
-            cell = cells[cell_index]
-            pdf_link = await cell.query_selector("a[href$='.pdf']")
-            if not pdf_link:
-                continue
-            pdf_url = await pdf_link.get_attribute("href")
-            if pdf_url:
-                normalized = stype.lower().strip()
-                print(f"🎯 Found {normalized.upper()} PDF URL for {symbol} {year}: {pdf_url}")
-                found_reports.append((normalized, year, pdf_url))
+        found_reports.extend(await _pdf_links_for_statement_row(row, stype, symbol, years))
     return found_reports
 
 
 def _filter_reports_for_target_year(found_reports: List[Tuple[str, int, str]]) -> List[Tuple[str, int, str]]:
     filtered = []
     for stype, year, pdf_url in found_reports:
-        if year == target_year and stype in ["q1", "q2", "q3"]:
-            filtered.append((stype, year, pdf_url))
-        elif year == target_year - 1 and stype == "annual":
+        if (year == target_year and stype in ("q1", "q2", "q3")) or (
+            year == target_year - 1 and stype == "annual"
+        ):
             filtered.append((stype, year, pdf_url))
     return filtered
 
@@ -323,10 +339,40 @@ async def get_all_financial_reports(page: Page, symbol: str):
     print(f"Found {len(rows)} rows in financial statements table")
     await _debug_print_table_rows(rows)
 
-    found_reports = await _collect_pdf_links_for_statement_types(page, symbol, rows, years)
+    found_reports = await _collect_pdf_links_for_statement_types(symbol, rows, years)
     filtered_reports = _filter_reports_for_target_year(found_reports)
     print(f"[DEBUG] Will download for {symbol}: {[f'{s}_{y}' for s, y, _ in filtered_reports]}")
     return filtered_reports
+
+
+async def _playwright_fetch_current_page_as_pdf_bytes(page: Page) -> Optional[list]:
+    return await page.evaluate(
+        """
+        async () => {
+            try {
+                const response = await fetch(window.location.href);
+                const arrayBuffer = await response.arrayBuffer();
+                return Array.from(new Uint8Array(arrayBuffer));
+            } catch (error) {
+                console.error('Error fetching PDF:', error);
+                return null;
+            }
+        }
+        """
+    )
+
+
+async def _write_pdf_from_navigated_page(
+    page: Page, pdf_path: Path, filename: str, symbol: str
+) -> bool:
+    pdf_content = await _playwright_fetch_current_page_as_pdf_bytes(page)
+    if not pdf_content:
+        print(f"❌ Failed to get PDF content for {symbol}")
+        return False
+    await _async_write_bytes(pdf_path, bytes(pdf_content))
+    print(f"✅ Downloaded {filename} ({len(pdf_content)} bytes)")
+    return True
+
 
 async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year: int, statement_type: str) -> bool:
     """Download PDF using the working stealth approach, generalized for statement type."""
@@ -350,40 +396,39 @@ async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year:
         if stop_flag_path.exists():
             print("🛑 Stop requested after navigation. Aborting download save.")
             return False
-        content_type = response.headers.get('content-type', '')
-        if 'pdf' in content_type.lower():
-            print(f"✅ Successfully accessed PDF for {symbol}")
-            pdf_content = await page.evaluate("""
-                async () => {
-                    try {
-                        const response = await fetch(window.location.href);
-                        const arrayBuffer = await response.arrayBuffer();
-                        return Array.from(new Uint8Array(arrayBuffer));
-                    } catch (error) {
-                        console.error('Error fetching PDF:', error);
-                        return null;
-                    }
-                }
-            """)
-            if pdf_content:
-                await _async_write_bytes(pdf_path, bytes(pdf_content))
-                print(f"✅ Downloaded {filename} ({len(pdf_content)} bytes)")
-                return True
-            else:
-                print(f"❌ Failed to get PDF content for {symbol}")
-                return False
-        else:
+        content_type = response.headers.get("content-type", "")
+        if "pdf" not in content_type.lower():
             print(f"❌ Did not get PDF content for {symbol} (Content-Type: {content_type})")
             return False
+        print(f"✅ Successfully accessed PDF for {symbol}")
+        return await _write_pdf_from_navigated_page(page, pdf_path, filename, symbol)
     except Exception as e:
         print(f"❌ Download error for {symbol}: {e}")
         return False
 
+
+def _company_retry_remaining(attempt: int, max_retries: int) -> bool:
+    return attempt < max_retries - 1
+
+
+async def _download_report_list_for_company(
+    page: Page, symbol: str, reports: List[Tuple[str, int, str]], stop_flag_env: str
+) -> bool:
+    all_success = True
+    for stype, year, pdf_url in reports:
+        if Path(stop_flag_env).exists():
+            print("🛑 Stop requested. Halting further report downloads for this company.")
+            return False
+        if not await download_pdf_with_stealth(page, pdf_url, symbol, year, stype):
+            all_success = False
+    return all_success
+
+
 async def process_company_with_retry(browser: Browser, symbol: str, max_retries: int = 3) -> bool:
+    stop_flag_env = os.environ.get("STOP_FLAG_FILE", DEFAULT_STOP_PDFS_FLAG)
     for attempt in range(max_retries):
+        page: Optional[Page] = None
         try:
-            # Abort early if stop requested
-            stop_flag_env = os.environ.get("STOP_FLAG_FILE", DEFAULT_STOP_PDFS_FLAG)
             if Path(stop_flag_env).exists():
                 print("🛑 Stop requested. Aborting company processing.")
                 return False
@@ -393,39 +438,70 @@ async def process_company_with_retry(browser: Browser, symbol: str, max_retries:
             reports = await get_all_financial_reports(page, symbol)
             if not reports:
                 await page.close()
-                if attempt < max_retries - 1:
+                page = None
+                if _company_retry_remaining(attempt, max_retries):
                     print(f"🔄 Retrying {symbol} (attempt {attempt + 2}/{max_retries})...")
                     await asyncio.sleep(random.uniform(2, 5))
                     continue
                 return False
-            all_success = True
-            for stype, year, pdf_url in reports:
-                # Check stop flag before starting each report download
-                if Path(stop_flag_env).exists():
-                    print("🛑 Stop requested. Halting further report downloads for this company.")
-                    all_success = False
-                    break
-                success = await download_pdf_with_stealth(page, pdf_url, symbol, year, stype)
-                if not success:
-                    all_success = False
+            all_success = await _download_report_list_for_company(
+                page, symbol, reports, stop_flag_env
+            )
             await page.close()
+            page = None
             if all_success:
                 return True
-            elif attempt < max_retries - 1:
+            if _company_retry_remaining(attempt, max_retries):
                 print(f"🔄 Retrying {symbol} (attempt {attempt + 2}/{max_retries})...")
                 await asyncio.sleep(random.uniform(2, 5))
         except Exception as e:
             print(f"❌ Error processing {symbol} (attempt {attempt + 1}): {e}")
-            await page.close()
-            if attempt < max_retries - 1:
+            if page is not None:
+                await page.close()
+            if _company_retry_remaining(attempt, max_retries):
                 await asyncio.sleep(random.uniform(2, 5))
     return False
+
+
+async def _persist_pdf_download_progress(
+    progress_path: Path,
+    processed: int,
+    success_count: int,
+    failed_count: int,
+    symbol: str,
+) -> None:
+    try:
+        await _async_write_json_file(
+            progress_path,
+            {
+                "status": "running",
+                "processed": processed,
+                "success": success_count,
+                "failed": failed_count,
+                "current_symbol": symbol,
+            },
+        )
+    except Exception:
+        pass
+
+
+async def _delay_before_next_company(i: int, total: int, stop_flag: Path) -> bool:
+    """Sleep between companies unless stopped. Returns True if pipeline should break."""
+    if i >= total:
+        return False
+    if stop_flag.exists():
+        print("🛑 Stop requested. Skipping wait and ending now.")
+        return True
+    delay = random.uniform(3, 7)
+    print(f"⏳ Waiting {delay:.1f} seconds before next company...")
+    await asyncio.sleep(delay)
+    return False
+
 
 async def download_all_financial_statements():
     """Download the most recent financial statements for all companies."""
     # Get company symbols from JSON file
     companies = get_company_symbols_from_json()
-    # companies = ["2030"]  # Test with a single company
     if not companies:
         print("❌ No company symbols found. Please run the ownership scraper first.")
         return
@@ -463,33 +539,15 @@ async def download_all_financial_statements():
                 failed_count += 1
                 print(f"❌ Failed to process {symbol}")
             processed += 1
-            try:
-                await _async_write_json_file(
-                    progress_path,
-                    {
-                        "status": "running",
-                        "processed": processed,
-                        "success": success_count,
-                        "failed": failed_count,
-                        "current_symbol": symbol,
-                    },
-                )
-            except Exception:
-                pass
-            
-            # Add delay between companies
-            if i < len(companies):
-                # If stop requested, skip waiting and break immediately
-                if stop_flag.exists():
-                    print("🛑 Stop requested. Skipping wait and ending now.")
-                    break
-                delay = random.uniform(3, 7)
-                print(f"⏳ Waiting {delay:.1f} seconds before next company...")
-                await asyncio.sleep(delay)
+            await _persist_pdf_download_progress(
+                progress_path, processed, success_count, failed_count, symbol
+            )
+            if await _delay_before_next_company(i, len(companies), stop_flag):
+                break
         
         # Summary
         print(f"\n{'='*50}")
-        print(f"📊 DOWNLOAD SUMMARY")
+        print("📊 DOWNLOAD SUMMARY")
         print(f"{'='*50}")
         print(f"✅ Successful: {success_count}")
         print(f"❌ Failed: {failed_count}")
@@ -513,22 +571,4 @@ async def download_all_financial_statements():
         await playwright.stop()
 
 if __name__ == "__main__":
-    # Uncomment to download all reports for all companies
     asyncio.run(download_all_financial_statements())
-    
-    # Comment out the test function when running all companies
-    # async def test_single_company():
-    #     # Test with the company we know has data
-    #     symbol = "2030"
-    #     print(f"🧪 Testing with {symbol} to verify new filtering...")
-    #     
-    #     playwright, browser, context = await setup_stealth_browser()
-    #     try:
-    #         success = await process_company_with_retry(browser, symbol)
-    #         print(f"Test result: {'✅ SUCCESS' if success else '❌ FAILED'}")
-    #     finally:
-    #             await browser.close()
-    #             await playwright.stop()
-    # 
-    # # Run the test
-    # asyncio.run(test_single_company()) 

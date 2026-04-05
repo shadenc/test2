@@ -84,21 +84,21 @@ def _quarterly_flows_for_year(statements: List[Dict], current_year: int) -> List
     return flows
 
 
-def parse_statement_info(filename: str) -> Dict:
+def parse_statement_info(filename: str) -> Optional[Dict[str, Any]]:
     """Parse PDF filename to extract company, statement type, and year"""
     # Example: 2222_q1_2025.pdf -> company: 2222, type: q1, year: 2025
     # Example: 2382_annual_2024.pdf -> company: 2382, type: annual, year: 2024
-    
-    parts = filename.replace('.pdf', '').split('_')
+
+    parts = filename.replace(".pdf", "").split("_")
     if len(parts) >= 3:
         company = parts[0]
         statement_type = parts[1]
         year = int(parts[2])
-        
+
         return {
-            'company': company,
-            'type': statement_type,
-            'year': year
+            "company": company,
+            "type": statement_type,
+            "year": year,
         }
     return None
 
@@ -249,6 +249,7 @@ def _merge_flow_with_ownership(flow_df: pd.DataFrame, ownership_df: pd.DataFrame
         left_on="company_symbol",
         right_on="symbol",
         how="left",
+        validate="many_to_one",
     )
     merged["reinvested_earnings_flow"] = merged.apply(_reinvested_earnings_from_row, axis=1)
     return merged

@@ -50,7 +50,7 @@ class EvidenceScreenshotGenerator:
                     
                     # Also try to highlight the unit declaration on the same page
                     try:
-                        self._highlight_units_on_page(page, text)
+                        self._highlight_units_on_page(page)
                     except Exception as e:
                         logger.warning(f"Unit highlight failed: {e}")
                     
@@ -92,7 +92,7 @@ class EvidenceScreenshotGenerator:
             logger.error(f"Highlighting error: {e}")
             return page
 
-    def _highlight_units_on_page(self, page, page_text: str) -> None:
+    def _highlight_units_on_page(self, page) -> None:
         """Attempt to find and highlight unit declaration text on the page.
         Draw a second rectangle (green) around the first matching unit phrase.
         """
@@ -164,6 +164,16 @@ def _extraction_success_dict(
     }
 
 
+def _numeric_retained_candidate(value_cell: str) -> Optional[float]:
+    """Parse a table cell as a retained-earnings magnitude, or None if not a valid candidate."""
+    if not value_cell or not value_cell.replace(",", "").isdigit():
+        return None
+    numeric_value = float(value_cell.replace(",", ""))
+    if numeric_value < 10000:
+        return None
+    return numeric_value
+
+
 class RetainedEarningsExtractor:
     def __init__(self):
         self.target_years = []
@@ -196,15 +206,35 @@ class RetainedEarningsExtractor:
         """Detect unit declarations in nearby text. Returns dict with unit and multiplier."""
         try:
             lowered = text.lower()
-            # English patterns
-            english_million = re.search(r"all\s+amounts?.*in\s+millions?\s+of\s+saudi\s+riyals|in\s+millions\b|millions\s+of\s+saudi\s+riyals", lowered)
-            english_thousand = re.search(r"all\s+amounts?.*in\s+thousands?\s+of\s+saudi\s+riyals|in\s+thousands\b|thousands\s+of\s+saudi\s+riyals", lowered)
-            english_sar = re.search(r"saudi\s+riyals?|\bSAR\b", lowered)
+            # English patterns (split alternations to keep each regex simple for static analysis)
+            _eng_million = (
+                r"all\s+amounts?\s+.*in\s+millions?\s+of\s+saudi\s+riyals",
+                r"in\s+millions\b",
+                r"millions\s+of\s+saudi\s+riyals",
+            )
+            _eng_thousand = (
+                r"all\s+amounts?\s+.*in\s+thousands?\s+of\s+saudi\s+riyals",
+                r"in\s+thousands\b",
+                r"thousands\s+of\s+saudi\s+riyals",
+            )
+            english_million = any(re.search(p, lowered) for p in _eng_million)
+            english_thousand = any(re.search(p, lowered) for p in _eng_thousand)
+            english_sar = any(
+                re.search(p, lowered) for p in (r"saudi\s+riyals?", r"\bSAR\b")
+            )
             
             # Arabic patterns (approximate common variants)
-            arabic_million = re.search(r"بالملايين|\bمليون\b|\bالملايين\b", text)
-            arabic_thousand = re.search(r"بال[اآ]لاف|\bألف\b|\bال[اآ]لاف\b", text)
-            arabic_sar = re.search(r"بالريال\s+السعودي|\bريال\b", text)
+            arabic_million = any(
+                re.search(p, text)
+                for p in (r"بالملايين", r"\bمليون\b", r"\bالملايين\b")
+            )
+            arabic_thousand = any(
+                re.search(p, text)
+                for p in (r"بال[اآ]لاف", r"\bألف\b", r"\bال[اآ]لاف\b")
+            )
+            arabic_sar = any(
+                re.search(p, text) for p in (r"بالريال\s+السعودي", r"\bريال\b")
+            )
             
             if english_million or arabic_million:
                 return { 'unit_detected': 'million_SAR', 'applied_multiplier': 1_000_000 }
@@ -261,6 +291,22 @@ class RetainedEarningsExtractor:
             logger.warning(f"Failed to detect units for PDF: {e}")
             return { 'unit_detected': 'unknown', 'applied_multiplier': 1 }
 
+    def _spire_value_from_column(
+        self, table, pdf_path: str, page_index: int, col_index: int, year: int
+    ) -> Optional[Dict]:
+        for row_idx in range(table.GetRowCount()):
+            value_cell = table.GetText(row_idx, col_index).strip()
+            numeric_value = _numeric_retained_candidate(value_cell)
+            if numeric_value is None:
+                continue
+            units = self._detect_units_for_pdf(
+                pdf_path, page_num=page_index + 1, search_value=value_cell
+            )
+            return _extraction_success_dict(
+                "spire_pdf", value_cell, numeric_value, units, year, page_index + 1
+            )
+        return None
+
     def _spire_scan_retained_row(self, table, pdf_path: str, page_index: int) -> Optional[Dict]:
         for row_index in range(table.GetRowCount()):
             first_col = table.GetText(row_index, 0).strip().lower()
@@ -271,19 +317,11 @@ class RetainedEarningsExtractor:
                     cell_data = table.GetText(row_index, col_index).strip()
                     if str(year) not in cell_data:
                         continue
-                    for row_idx in range(table.GetRowCount()):
-                        value_cell = table.GetText(row_idx, col_index).strip()
-                        if not value_cell or not value_cell.replace(",", "").isdigit():
-                            continue
-                        numeric_value = float(value_cell.replace(",", ""))
-                        if numeric_value < 10000:
-                            continue
-                        units = self._detect_units_for_pdf(
-                            pdf_path, page_num=page_index + 1, search_value=value_cell
-                        )
-                        return _extraction_success_dict(
-                            "spire_pdf", value_cell, numeric_value, units, year, page_index + 1
-                        )
+                    found = self._spire_value_from_column(
+                        table, pdf_path, page_index, col_index, year
+                    )
+                    if found:
+                        return found
         return None
 
     def extract_with_spire_pdf(self, pdf_path: str) -> Optional[Dict]:
@@ -312,6 +350,29 @@ class RetainedEarningsExtractor:
             logger.error(f"Spire.PDF error: {e}")
             return None
     
+    def _camelot_try_year_column(self, pdf_path: str, df, year: int, col_idx: int) -> Optional[Dict]:
+        for row_idx in range(len(df)):
+            value = df.iloc[row_idx, col_idx]
+            if not value:
+                continue
+            value_str = str(value)
+            numeric_value = _numeric_retained_candidate(value_str)
+            if numeric_value is None:
+                continue
+            page_num = self._find_page_for_value(pdf_path, value_str)
+            units = self._detect_units_for_pdf(
+                pdf_path, page_num=page_num, search_value=value_str
+            )
+            return _extraction_success_dict(
+                "camelot",
+                value_str,
+                numeric_value,
+                units,
+                year,
+                page_num if page_num else 1,
+            )
+        return None
+
     def _camelot_scan_dataframe(self, pdf_path: str, df) -> Optional[Dict]:
         for _, row in df.iterrows():
             if RETAINED_EARNINGS_LABEL not in str(row.iloc[0]).lower():
@@ -320,25 +381,9 @@ class RetainedEarningsExtractor:
                 for col_idx, col_name in enumerate(df.columns):
                     if str(year) not in str(col_name):
                         continue
-                    for row_idx in range(len(df)):
-                        value = df.iloc[row_idx, col_idx]
-                        if not value or not str(value).replace(",", "").isdigit():
-                            continue
-                        numeric_value = float(str(value).replace(",", ""))
-                        if numeric_value < 10000:
-                            continue
-                        page_num = self._find_page_for_value(pdf_path, str(value))
-                        units = self._detect_units_for_pdf(
-                            pdf_path, page_num=page_num, search_value=str(value)
-                        )
-                        return _extraction_success_dict(
-                            "camelot",
-                            str(value),
-                            numeric_value,
-                            units,
-                            year,
-                            page_num if page_num else 1,
-                        )
+                    found = self._camelot_try_year_column(pdf_path, df, year, col_idx)
+                    if found:
+                        return found
         return None
 
     def extract_with_camelot(self, pdf_path: str) -> Optional[Dict]:
@@ -466,6 +511,53 @@ def save_to_database(results):
     conn.commit()
     conn.close()
 
+
+def _stop_flag_active(stop_flag_file: str) -> bool:
+    try:
+        return os.path.exists(stop_flag_file)
+    except Exception as e:
+        logger.warning("Stop flag check failed; continuing extraction: %s", type(e).__name__)
+        return False
+
+
+def _persist_partial_extraction_results(results: List) -> None:
+    try:
+        results_dir = Path("data/results")
+        results_dir.mkdir(parents=True, exist_ok=True)
+        output_file_tmp = results_dir / "retained_earnings_results.partial.json"
+        with open(output_file_tmp, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _try_evidence_screenshot(
+    evidence_generator: EvidenceScreenshotGenerator,
+    pdf_path: str,
+    company_symbol: str,
+    search_value: str,
+) -> None:
+    try:
+        print("  📸 Generating evidence screenshot...")
+        screenshot_path = evidence_generator.generate_highlight_screenshot(
+            str(pdf_path), search_value, company_symbol
+        )
+        if screenshot_path:
+            print(f"  ✓ Evidence screenshot saved: {screenshot_path}")
+        else:
+            print("  ⚠️ Failed to generate evidence screenshot")
+    except Exception as e:
+        print(f"  ⚠️ Error generating evidence screenshot: {e}")
+
+
+def _log_extraction_outcome(result: Dict) -> None:
+    if result["success"]:
+        print(f"  ✓ Found: {result['value']} (Year: {result['year']})")
+        print(f"  ✓ Method: {result['method']}")
+        return
+    print(f"  ✗ Error: {result.get('error', 'Unknown error')}")
+
+
 def main():
     pdf_dir = Path("data/pdfs")
     pdf_files = list(pdf_dir.glob("*.pdf"))
@@ -485,52 +577,27 @@ def main():
     stop_flag_file = os.environ.get("STOP_FLAG_FILE", str(Path("data/runtime/stop_pdfs_pipeline.flag").resolve()))
 
     for i, pdf_file in enumerate(pdf_files, 1):
-        try:
-            if os.path.exists(stop_flag_file):
-                print("🛑 Stop requested. Ending extraction loop early and saving partial results...")
-                break
-        except Exception as e:
-            logger.warning("Stop flag check failed; continuing extraction: %s", type(e).__name__)
+        if _stop_flag_active(stop_flag_file):
+            print("🛑 Stop requested. Ending extraction loop early and saving partial results...")
+            break
         print(f"\n[{i}/{len(pdf_files)}] Processing: {pdf_file.name}")
-        
+
         company_symbol = get_company_symbol_from_filename(pdf_file.name)
         result = extractor.extract_retained_earnings(str(pdf_file))
-        
-        # Add metadata
-        result['company_symbol'] = company_symbol
-        result['pdf_filename'] = pdf_file.name
-        
-        if result['success']:
-            successful_extractions += 1
-            print(f"  ✓ Found: {result['value']} (Year: {result['year']})")
-            print(f"  ✓ Method: {result['method']}")
-            
-            # Generate evidence screenshot
-            try:
-                print(f"  📸 Generating evidence screenshot...")
-                screenshot_path = evidence_generator.generate_highlight_screenshot(
-                    str(pdf_file), result['value'], company_symbol
-                )
-                if screenshot_path:
-                    print(f"  ✓ Evidence screenshot saved: {screenshot_path}")
-                else:
-                    print(f"  ⚠️ Failed to generate evidence screenshot")
-            except Exception as e:
-                print(f"  ⚠️ Error generating evidence screenshot: {e}")
-        else:
-            print(f"  ✗ Error: {result.get('error', 'Unknown error')}")
-        
-        results.append(result)
 
-        # Persist partial results after each file so UI can finalize immediately on stop
-        try:
-            results_dir = Path("data/results")
-            results_dir.mkdir(parents=True, exist_ok=True)
-            output_file_tmp = results_dir / "retained_earnings_results.partial.json"
-            with open(output_file_tmp, 'w', encoding='utf-8') as f:
-                json.dump(results, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        result["company_symbol"] = company_symbol
+        result["pdf_filename"] = pdf_file.name
+
+        if result["success"]:
+            successful_extractions += 1
+        _log_extraction_outcome(result)
+        if result["success"]:
+            _try_evidence_screenshot(
+                evidence_generator, str(pdf_file), company_symbol, result["value"]
+            )
+
+        results.append(result)
+        _persist_partial_extraction_results(results)
     
     # Save results
     results_dir = Path("data/results")
@@ -545,7 +612,7 @@ def main():
     
     # Print summary
     print(f"\n{'='*50}")
-    print(f"EXTRACTION SUMMARY")
+    print("EXTRACTION SUMMARY")
     print(f"{'='*50}")
     print(f"Total PDFs processed: {len(pdf_files)}")
     print(f"Successful extractions: {successful_extractions}")

@@ -6,10 +6,14 @@ Creates highlighted screenshots showing where values were found in PDFs
 
 import fitz
 import json
-import os
-from pathlib import Path
 import logging
+import re
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# Basenames only; must stay under this directory (no path traversal).
+_PDF_INPUT_DIR = Path("data/pdfs")
+_SAFE_PDF_BASENAME = re.compile(r"^[A-Za-z0-9_.-]+\.pdf$")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -84,8 +88,21 @@ class EvidenceScreenshotGenerator:
                 type(e).__name__,
             )
             return None
-    
-    def generate_highlight_screenshot(self, pdf_path: str, search_value: str, company_symbol: str) -> Optional[str]:
+
+    def _resolved_pdf_path(self, pdf_filename: str) -> Optional[Path]:
+        if not pdf_filename or any(sep in pdf_filename for sep in ("/", "\\")) or ".." in pdf_filename:
+            logger.warning("Rejected PDF path with directory components: %s", pdf_filename)
+            return None
+        if not _SAFE_PDF_BASENAME.fullmatch(pdf_filename):
+            logger.warning("Rejected unsafe PDF basename: %s", pdf_filename)
+            return None
+        root = _PDF_INPUT_DIR.resolve()
+        path = (root / pdf_filename).resolve()
+        if path.parent != root:
+            return None
+        return path
+
+    def generate_highlight_screenshot(self, pdf_path: str, search_value: str) -> Optional[str]:
         """
         Generate a highlighted screenshot showing where the value was found
         Returns the path to the generated screenshot or None
@@ -158,16 +175,15 @@ class EvidenceScreenshotGenerator:
                 company_symbol = result['company_symbol']
                 pdf_filename = result['pdf_filename']
                 value = result['value']
-                
-                pdf_path = f"data/pdfs/{pdf_filename}"
-                
-                if not os.path.exists(pdf_path):
-                    logger.warning(f"PDF not found: {pdf_path}")
+
+                pdf_path = self._resolved_pdf_path(pdf_filename)
+                if pdf_path is None:
                     continue
-                
-                screenshot_path = self.generate_highlight_screenshot(
-                    pdf_path, value, company_symbol
-                )
+                if not pdf_path.is_file():
+                    logger.warning("PDF not found: %s", pdf_path)
+                    continue
+
+                screenshot_path = self.generate_highlight_screenshot(str(pdf_path), value)
                 
                 if screenshot_path:
                     generated_screenshots.append({
@@ -197,17 +213,17 @@ def main():
     screenshots = generator.generate_all_evidence_screenshots()
     
     print(f"\n{'='*50}")
-    print(f"EVIDENCE SCREENSHOT GENERATION SUMMARY")
+    print("EVIDENCE SCREENSHOT GENERATION SUMMARY")
     print(f"{'='*50}")
     print(f"Generated screenshots: {len(screenshots)}")
-    
+
     if screenshots:
-        print(f"\nGenerated evidence for:")
+        print("\nGenerated evidence for:")
         for screenshot in screenshots:
             print(f"  {screenshot['company_symbol']}: {screenshot['value']} -> {screenshot['screenshot_path']}")
-    
-    print(f"\nScreenshots saved to: output/screenshots/")
-    print(f"Metadata saved to: output/screenshots/evidence_metadata.json")
+
+    print("\nScreenshots saved to: output/screenshots/")
+    print("Metadata saved to: output/screenshots/evidence_metadata.json")
 
 if __name__ == "__main__":
     main() 
