@@ -18,6 +18,7 @@ from playwright.async_api import async_playwright, Browser, Page, TimeoutError a
 OUTPUT_DIR = Path("data/results")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_FILE = OUTPUT_DIR / "quarterly_net_profit.json"
+SEARCH_INPUT_SELECTOR = "#query-input"
 
 def get_company_symbols_from_json():
     """Get company symbols from the existing JSON file."""
@@ -126,9 +127,9 @@ async def navigate_to_company_profile(page: Page, symbol: str) -> bool:
         print(f"🔍 Navigating to search page for symbol {symbol}")
         
         # Wait for search input and fill symbol
-        await page.wait_for_selector("#query-input", timeout=5000)
-        await page.click("#query-input")
-        await page.fill("#query-input", symbol)
+        await page.wait_for_selector(SEARCH_INPUT_SELECTOR, timeout=5000)
+        await page.click(SEARCH_INPUT_SELECTOR)
+        await page.fill(SEARCH_INPUT_SELECTOR, symbol)
         await page.wait_for_timeout(500)
         
         # Submit search using JavaScript
@@ -364,7 +365,7 @@ async def scrape_quarterly_net_profit(page: Page, symbol: str) -> Optional[Dict]
                     quarters.append(f"Q3 {year}")
                 else:
                     quarters.append(f"Q4 {year}")
-            except:
+            except (ValueError, AttributeError):
                 quarters.append(date)
         
         print(f"📅 Converted to quarters: {quarters}")

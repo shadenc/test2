@@ -12,12 +12,14 @@ import time
 import webbrowser
 from pathlib import Path
 
+PROMPT_PRESS_ENTER_EXIT = "Press Enter to exit..."
+
 def run_command(command, shell=False):
     """Run a command and return success status"""
     try:
         result = subprocess.run(command, shell=shell, capture_output=True, text=True)
         return result.returncode == 0
-    except:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 def check_python():
@@ -28,7 +30,7 @@ def check_python():
         return True
     else:
         print("Python not found. Please install Python 3.8+ from python.org")
-        input("Press Enter to exit...")
+        input(PROMPT_PRESS_ENTER_EXIT)
         return False
 
 def check_node():
@@ -39,7 +41,7 @@ def check_node():
         return True
     else:
         print("Node.js not found. Please install Node.js 14+ from nodejs.org")
-        input("Press Enter to exit...")
+        input(PROMPT_PRESS_ENTER_EXIT)
         return False
 
 def setup_virtual_environment():
@@ -129,11 +131,11 @@ def main():
     # Setup virtual environment and install dependencies
     python_path = setup_virtual_environment()
     if not python_path:
-        input("Press Enter to exit...")
+        input(PROMPT_PRESS_ENTER_EXIT)
         return
     
     if not install_frontend_dependencies():
-        input("Press Enter to exit...")
+        input(PROMPT_PRESS_ENTER_EXIT)
         return
     
     # Start services
@@ -151,7 +153,7 @@ def main():
     try:
         webbrowser.open("http://localhost:3000")
         print("Browser opened automatically!")
-    except:
+    except (webbrowser.Error, OSError):
         print("Please open: http://localhost:3000")
     
     print("\nTo stop: Close the command windows")

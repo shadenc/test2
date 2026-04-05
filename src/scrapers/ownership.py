@@ -34,6 +34,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+SELECTOR_OWNERSHIP_TABLE_ROWS = "table tbody tr"
+
 class TadawulOwnershipScraper:
     """Scraper for foreign ownership data from Tadawul.
     
@@ -121,9 +123,9 @@ class TadawulOwnershipScraper:
         try:
             await page.goto(url, wait_until="networkidle", timeout=60000)
             logger.info("Waiting for table to load...")
-            await page.wait_for_selector("table tbody tr", timeout=30000)
+            await page.wait_for_selector(SELECTOR_OWNERSHIP_TABLE_ROWS, timeout=30000)
             
-            rows = await page.query_selector_all("table tbody tr")
+            rows = await page.query_selector_all(SELECTOR_OWNERSHIP_TABLE_ROWS)
             data = []
             
             for row in rows:
@@ -233,7 +235,7 @@ class TadawulOwnershipScraper:
                     logger.info("Table element found")
                     
                     # Then wait for rows with a shorter timeout
-                    page.wait_for_selector("table tbody tr", timeout=30000)
+                    page.wait_for_selector(SELECTOR_OWNERSHIP_TABLE_ROWS, timeout=30000)
                     logger.info("Table rows found")
                 except TimeoutError:
                     if debug:
@@ -247,7 +249,7 @@ class TadawulOwnershipScraper:
                     raise
                 
                 # Get all rows
-                rows = page.query_selector_all("table tbody tr")
+                rows = page.query_selector_all(SELECTOR_OWNERSHIP_TABLE_ROWS)
                 logger.info(f"Found {len(rows)} rows in table")
                 
                 data = []

@@ -26,14 +26,9 @@ import Button from '@mui/material/Button';
 import Drawer from '@mui/material/Drawer';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
-import ListItemButton from '@mui/material/ListItemButton';
-import ListItemIcon from '@mui/material/ListItemIcon';
-import ListItemText from '@mui/material/ListItemText';
 import Collapse from '@mui/material/Collapse';
 import MenuIcon from '@mui/icons-material/Menu';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
-import ExpandLess from '@mui/icons-material/ExpandLess';
-import ExpandMore from '@mui/icons-material/ExpandMore';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import MenuItem from '@mui/material/MenuItem';
 import EditIcon from '@mui/icons-material/Edit';
@@ -42,6 +37,108 @@ import LinearProgress from '@mui/material/LinearProgress';
 
 // API URL configuration - supports both localhost and production
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5003';
+
+/** Parse retained-earnings flow CSV; extracted to limit callback nesting (Sonar). */
+function parseQuarterlyFlowCsvText(csvText) {
+  return new Promise((resolve) => {
+    Papa.parse(csvText, {
+      header: true,
+      complete: (result) => {
+        console.log("CSV parsing result:", result);
+        if (result.data && result.data.length > 0) {
+          const cleanedData = result.data
+            .filter((row) => row.company_symbol && row.company_symbol.trim() !== '')
+            .map((row) => {
+              const cleanedRow = {};
+              Object.keys(row).forEach((key) => {
+                const cleanKey = key.trim();
+                cleanedRow[cleanKey] = row[key] ? row[key].trim() : '';
+              });
+              return cleanedRow;
+            });
+          console.log("Cleaned CSV data:", cleanedData);
+          resolve(cleanedData);
+        } else {
+          console.log("No CSV data found");
+          resolve([]);
+        }
+      },
+      error: (error) => {
+        console.error("Error parsing CSV data:", error);
+        resolve([]);
+      },
+    });
+  });
+}
+
+const QUARTERS_Q1_Q4 = ['Q1', 'Q2', 'Q3', 'Q4'];
+
+function buildFlowMapFromQuarterlyRows(quarterlyFlowData) {
+  const flowMap = {};
+  quarterlyFlowData.forEach((row) => {
+    const symbol = row.company_symbol ? row.company_symbol.toString().trim() : '';
+    const quarter = row.quarter ? row.quarter.toString().trim() : '';
+    if (!symbol || !quarter) {
+      return;
+    }
+    if (!flowMap[symbol]) {
+      flowMap[symbol] = {};
+    }
+    flowMap[symbol][quarter] = {
+      previous_value: row.previous_value || '',
+      current_value: row.current_value || '',
+      flow: row.flow || '',
+      flow_formula: row.flow_formula || '',
+      year: row.year || '',
+      foreign_investor_flow: row.reinvested_earnings_flow || '',
+      net_profit_foreign_investor: row.net_profit_foreign_investor || '',
+      distributed_profits_foreign_investor: row.distributed_profits_foreign_investor || '',
+    };
+    console.log(`Mapped flow data for ${symbol} ${quarter}:`, {
+      ...flowMap[symbol][quarter],
+      net_profit_foreign_investor: row.net_profit_foreign_investor,
+      distributed_profits_foreign_investor: row.distributed_profit_foreign_investor,
+    });
+  });
+  return flowMap;
+}
+
+function mergeOwnershipWithQuarterlyFlow(foreignOwnershipData, flowMap, onEvidenceClick) {
+  const mergedData = [];
+  foreignOwnershipData.forEach((row, idx) => {
+    const symbol = row.symbol ? row.symbol.toString().trim() : '';
+    const flowData = flowMap[symbol] || {};
+    QUARTERS_Q1_Q4.forEach((quarter) => {
+      const quarterData = flowData[quarter] || {};
+      const mergedRow = {
+        ...row,
+        company_symbol: symbol,
+        previous_quarter_value: quarterData.previous_value || '',
+        current_quarter_value: quarterData.current_value || '',
+        flow: quarterData.flow || '',
+        flow_formula: quarterData.flow_formula || '',
+        year: quarterData.year || '',
+        foreign_investor_flow: quarterData.foreign_investor_flow || '',
+        net_profit_foreign_investor: quarterData.net_profit_foreign_investor || '',
+        distributed_profits_foreign_investor: quarterData.distributed_profits_foreign_investor || '',
+        quarter,
+        id: `${symbol}_${quarter}_${idx}`,
+        onEvidenceClick,
+      };
+      if (mergedData.length < 5 || symbol === '2222') {
+        console.log(`Row ${mergedData.length} (${symbol} ${quarter}):`, {
+          symbol: mergedRow.symbol,
+          company_name: mergedRow.company_name,
+          quarter: mergedRow.quarter,
+          flow: mergedRow.flow,
+          flow_formula: mergedRow.flow_formula,
+        });
+      }
+      mergedData.push(mergedRow);
+    });
+  });
+  return mergedData;
+}
 
 // Evidence Modal Component
 const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpdate }) => {
@@ -553,11 +650,10 @@ const InlineEditableCell = ({ value, onSave, fieldType, companySymbol, companyNa
         <IconButton 
           size="small" 
           onClick={handleEdit}
-          sx={{ 
+          sx={{
             color: '#ff9800',
-            '&:hover': { bgcolor: '#fff3e0' },
             opacity: 0.7,
-            '&:hover': { opacity: 1 }
+            '&:hover': { bgcolor: '#fff3e0', opacity: 1 },
           }}
         >
           <EditIcon fontSize="small" />
@@ -775,14 +871,14 @@ function App() {
       
       // Create blob and download
       const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const url = globalThis.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      globalThis.URL.revokeObjectURL(url);
+      a.remove();
       
       // Refetch user exports so the new file appears in the sidebar
       setUserExportsLoading(true);
@@ -821,38 +917,7 @@ function App() {
         }
         return res.text();
       })
-      .then((csvText) => {
-        return new Promise((resolve) => {
-          Papa.parse(csvText, {
-            header: true,
-            complete: (result) => {
-              console.log("CSV parsing result:", result);
-              if (result.data && result.data.length > 0) {
-                // Clean and process CSV data
-                const cleanedData = result.data
-                  .filter(row => row.company_symbol && row.company_symbol.trim() !== '')
-                  .map((row) => {
-                    const cleanedRow = {};
-                    Object.keys(row).forEach(key => {
-                      const cleanKey = key.trim();
-                      cleanedRow[cleanKey] = row[key] ? row[key].trim() : '';
-                    });
-                    return cleanedRow;
-                  });
-                console.log("Cleaned CSV data:", cleanedData);
-                resolve(cleanedData);
-              } else {
-                console.log("No CSV data found");
-                resolve([]);
-              }
-            },
-            error: (error) => {
-              console.error("Error parsing CSV data:", error);
-              resolve([]);
-            }
-          });
-        });
-      })
+      .then((csvText) => parseQuarterlyFlowCsvText(csvText))
       .catch((error) => {
         console.error("Error loading quarterly flow data:", error);
         return [];
@@ -863,87 +928,18 @@ function App() {
       .then(([foreignOwnershipData, quarterlyFlowData]) => {
         console.log("Foreign ownership data count:", foreignOwnershipData.length);
         console.log("Quarterly flow data count:", quarterlyFlowData.length);
-        
-        // Create a map of quarterly flow data by symbol and quarter
-        const flowMap = {};
-        
-        quarterlyFlowData.forEach(row => {
-          const symbol = row.company_symbol ? row.company_symbol.toString().trim() : "";
-          const quarter = row.quarter ? row.quarter.toString().trim() : "";
-          if (symbol && quarter) {
-            if (!flowMap[symbol]) {
-              flowMap[symbol] = {};
-            }
-            flowMap[symbol][quarter] = {
-              previous_value: row.previous_value || "",
-              current_value: row.current_value || "",
-              flow: row.flow || "",
-              flow_formula: row.flow_formula || "",
-              year: row.year || "",
-              foreign_investor_flow: row.reinvested_earnings_flow || "",
-              net_profit_foreign_investor: row.net_profit_foreign_investor || "",
-              distributed_profits_foreign_investor: row.distributed_profits_foreign_investor || ""
-            };
-            
-            // Debug: Log the new fields
-            console.log(`Mapped flow data for ${symbol} ${quarter}:`, {
-              ...flowMap[symbol][quarter],
-              'net_profit_foreign_investor': row.net_profit_foreign_investor,
-              'distributed_profits_foreign_investor': row.distributed_profit_foreign_investor
-            });
-          }
-        });
 
+        const flowMap = buildFlowMapFromQuarterlyRows(quarterlyFlowData);
         console.log("Flow map keys:", Object.keys(flowMap));
         console.log("Sample flow data for 2222:", flowMap["2222"]);
 
-        // Merge the data - create a row for each available quarter
-        const mergedData = [];
-        
-        foreignOwnershipData.forEach((row, idx) => {
-          const symbol = row.symbol ? row.symbol.toString().trim() : "";
-          const flowData = flowMap[symbol] || {};
-          const hasFlowData = symbol in flowMap;
-          
-          // Create rows for all quarters (Q1, Q2, Q3, Q4) for every company
-          const allQuarters = ["Q1", "Q2", "Q3", "Q4"];
-          
-          allQuarters.forEach(quarter => {
-            const quarterData = flowData[quarter] || {};
-            
-            const mergedRow = {
-              ...row,
-              company_symbol: symbol, // Add this for net profit column access
-              previous_quarter_value: quarterData.previous_value || "",
-              current_quarter_value: quarterData.current_value || "",
-              flow: quarterData.flow || "",
-              flow_formula: quarterData.flow_formula || "",
-              year: quarterData.year || "",
-              foreign_investor_flow: quarterData.foreign_investor_flow || "",
-              net_profit_foreign_investor: quarterData.net_profit_foreign_investor || "",
-              distributed_profits_foreign_investor: quarterData.distributed_profits_foreign_investor || "",
-              quarter: quarter,
-              id: symbol + "_" + quarter + "_" + idx,
-              onEvidenceClick: handleEvidenceClick, // Add the evidence click handler
-            };
-            
-            // Debug: Log first few rows to see the data structure
-            if (mergedData.length < 5 || symbol === "2222") {
-              console.log(`Row ${mergedData.length} (${symbol} ${quarter}):`, {
-                symbol: mergedRow.symbol,
-                company_name: mergedRow.company_name,
-                quarter: mergedRow.quarter,
-                flow: mergedRow.flow,
-                flow_formula: mergedRow.flow_formula
-              });
-            }
-            
-            mergedData.push(mergedRow);
-          });
-        });
-
+        const mergedData = mergeOwnershipWithQuarterlyFlow(
+          foreignOwnershipData,
+          flowMap,
+          handleEvidenceClick,
+        );
         console.log("Final merged data sample:", mergedData.slice(0, 3));
-        
+
         setRows(mergedData);
         setLoading(false);
       })
@@ -1293,9 +1289,9 @@ function App() {
     fetchNetProfitData();
   }, []);
 
-  // In App(), define a function to update the row and attach it to window so the modal can call it
+  // Expose row update on globalThis so nested modal handlers can invoke it without prop drilling
   useEffect(() => {
-    window.updateRowAfterCorrection = (updated) => {
+    globalThis.updateRowAfterCorrection = (updated) => {
       setRows((prevRows) => prevRows.map(row => {
         if (row.symbol && updated.company_symbol && row.symbol.toString() === updated.company_symbol.toString()) {
           return {
@@ -1309,7 +1305,7 @@ function App() {
         return row;
       }));
     };
-    return () => { window.updateRowAfterCorrection = undefined; };
+    return () => { globalThis.updateRowAfterCorrection = undefined; };
   }, []);
 
   // Filter rows based on search and quarter filter
@@ -1382,14 +1378,14 @@ function App() {
       
       // Create blob and download
       const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const url = globalThis.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      globalThis.URL.revokeObjectURL(url);
+      a.remove();
       
       // Clear the custom inputs after successful export
       setCustomExportDate("");
@@ -1560,19 +1556,17 @@ function App() {
                 fontWeight: 500,
                 fontSize: 14,
                 textTransform: 'none',
-                '&:hover': {
-                  bgcolor: '#e9ecef',
-                  borderColor: '#dee2e6',
-                  transform: 'translateY(-1px)',
-                },
                 display: 'flex',
                 alignItems: 'center',
                 gap: 1.5,
                 boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                transition: 'all 0.2s ease-in-out',
                 '&:hover': {
+                  bgcolor: '#e9ecef',
+                  borderColor: '#dee2e6',
+                  transform: 'translateY(-1px)',
                   boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
                 },
-                transition: 'all 0.2s ease-in-out'
               }}
             >
               <RefreshIcon sx={{ fontSize: 18, color: '#6c757d' }} />
@@ -1595,18 +1589,16 @@ function App() {
                   fontWeight: 600,
                   fontSize: 14,
                   textTransform: 'none',
-                  '&:hover': {
-                    bgcolor: '#14532d',
-                    transform: 'translateY(-1px)',
-                  },
                   display: 'flex',
                   alignItems: 'center',
                   gap: 1.5,
                   boxShadow: '0 4px 12px rgba(30, 102, 65, 0.3)',
+                  transition: 'all 0.2s ease-in-out',
                   '&:hover': {
+                    bgcolor: '#14532d',
+                    transform: 'translateY(-1px)',
                     boxShadow: '0 6px 16px rgba(30, 102, 65, 0.4)',
                   },
-                  transition: 'all 0.2s ease-in-out'
                 }}
               >
                 <FileDownloadIcon sx={{ fontSize: 18, color: 'white' }} />
@@ -1966,8 +1958,8 @@ function App() {
             });
             const data = await response.json();
             if (data.status === 'success' && data.updated) {
-              if (typeof window.updateRowAfterCorrection === 'function') {
-                window.updateRowAfterCorrection(data.updated);
+              if (typeof globalThis.updateRowAfterCorrection === 'function') {
+                globalThis.updateRowAfterCorrection(data.updated);
               }
               setEditModalOpen(false);
               setEditLoading(false);

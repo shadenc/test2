@@ -10,6 +10,80 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
+FLOW_CSV_PATH = "data/results/retained_earnings_flow.csv"
+FLOW_JSON_PATH = "data/results/retained_earnings_flow.json"
+
+_STMT_TYPE_ORDER = {"annual": 0, "q1": 1, "q2": 2, "q3": 3, "q4": 4}
+
+
+def _find_statement(statements: List[Dict], stype: str, year: int):
+    return next((s for s in statements if s["type"] == stype and s["year"] == year), None)
+
+
+def _append_flow(
+    flows: List[Dict],
+    quarter: str,
+    year: int,
+    current: Optional[Dict],
+    previous: Optional[Dict],
+    formula: str,
+) -> None:
+    if current is None or previous is None:
+        return
+    flows.append(
+        {
+            "quarter": quarter,
+            "year": year,
+            "current_value": current["value"],
+            "previous_value": previous["value"],
+            "flow": current["value"] - previous["value"],
+            "flow_formula": formula,
+        }
+    )
+
+
+def _quarterly_flows_for_year(statements: List[Dict], current_year: int) -> List[Dict]:
+    flows: List[Dict] = []
+    q1 = _find_statement(statements, "q1", current_year)
+    annual_prev = _find_statement(statements, "annual", current_year - 1)
+    _append_flow(
+        flows,
+        "Q1",
+        current_year,
+        q1,
+        annual_prev,
+        f"Q1 {current_year} - Annual {current_year - 1}",
+    )
+    q2 = _find_statement(statements, "q2", current_year)
+    _append_flow(
+        flows,
+        "Q2",
+        current_year,
+        q2,
+        q1,
+        f"Q2 {current_year} - Q1 {current_year}",
+    )
+    q3 = _find_statement(statements, "q3", current_year)
+    _append_flow(
+        flows,
+        "Q3",
+        current_year,
+        q3,
+        q2,
+        f"Q3 {current_year} - Q2 {current_year}",
+    )
+    q4 = _find_statement(statements, "q4", current_year)
+    _append_flow(
+        flows,
+        "Q4",
+        current_year,
+        q4,
+        q3,
+        f"Q4 {current_year} - Q3 {current_year}",
+    )
+    return flows
+
+
 def parse_statement_info(filename: str) -> Dict:
     """Parse PDF filename to extract company, statement type, and year"""
     # Example: 2222_q1_2025.pdf -> company: 2222, type: q1, year: 2025
@@ -56,84 +130,22 @@ def calculate_retained_earnings_flow(retained_data: List[Dict]) -> List[Dict]:
     flow_results = []
     
     for company, statements in companies.items():
-        # Sort statements by year and type (annual first, then q1, q2, q3, q4)
-        type_order = {'annual': 0, 'q1': 1, 'q2': 2, 'q3': 3, 'q4': 4}
-        statements.sort(key=lambda x: (x['year'], type_order.get(x['type'], 999)))
-        
-        # Find current year (most recent year with data)
+        statements.sort(key=lambda x: (x["year"], _STMT_TYPE_ORDER.get(x["type"], 999)))
         if not statements:
             continue
-            
-        current_year = max(s['year'] for s in statements)
-        
-        # Calculate flows for current year
-        flows = []
-        
-        # Q1 Flow = Q1 current year - Annual previous year
-        q1_current = next((s for s in statements if s['type'] == 'q1' and s['year'] == current_year), None)
-        annual_previous = next((s for s in statements if s['type'] == 'annual' and s['year'] == current_year - 1), None)
-        
-        if q1_current and annual_previous:
-            q1_flow = q1_current['value'] - annual_previous['value']
-            flows.append({
-                'quarter': 'Q1',
-                'year': current_year,
-                'current_value': q1_current['value'],
-                'previous_value': annual_previous['value'],
-                'flow': q1_flow,
-                'flow_formula': f"Q1 {current_year} - Annual {current_year-1}"
-            })
-        
-        # Q2 Flow = Q2 current year - Q1 current year
-        q2_current = next((s for s in statements if s['type'] == 'q2' and s['year'] == current_year), None)
-        if q2_current and q1_current:
-            q2_flow = q2_current['value'] - q1_current['value']
-            flows.append({
-                'quarter': 'Q2',
-                'year': current_year,
-                'current_value': q2_current['value'],
-                'previous_value': q1_current['value'],
-                'flow': q2_flow,
-                'flow_formula': f"Q2 {current_year} - Q1 {current_year}"
-            })
-        
-        # Q3 Flow = Q3 current year - Q2 current year
-        q3_current = next((s for s in statements if s['type'] == 'q3' and s['year'] == current_year), None)
-        if q3_current and q2_current:
-            q3_flow = q3_current['value'] - q2_current['value']
-            flows.append({
-                'quarter': 'Q3',
-                'year': current_year,
-                'current_value': q3_current['value'],
-                'previous_value': q2_current['value'],
-                'flow': q3_flow,
-                'flow_formula': f"Q3 {current_year} - Q2 {current_year}"
-            })
-        
-        # Q4 Flow = Q4 current year - Q3 current year
-        q4_current = next((s for s in statements if s['type'] == 'q4' and s['year'] == current_year), None)
-        if q4_current and q3_current:
-            q4_flow = q4_current['value'] - q3_current['value']
-            flows.append({
-                'quarter': 'Q4',
-                'year': current_year,
-                'current_value': q4_current['value'],
-                'previous_value': q3_current['value'],
-                'flow': q4_flow,
-                'flow_formula': f"Q4 {current_year} - Q3 {current_year}"
-            })
-        
-        # Add flows to results
-        for flow in flows:
-            flow_results.append({
-                'company_symbol': company,
-                'quarter': flow['quarter'],
-                'year': flow['year'],
-                'current_value': flow['current_value'],
-                'previous_value': flow['previous_value'],
-                'flow': flow['flow'],
-                'flow_formula': flow['flow_formula']
-            })
+        current_year = max(s["year"] for s in statements)
+        for flow in _quarterly_flows_for_year(statements, current_year):
+            flow_results.append(
+                {
+                    "company_symbol": company,
+                    "quarter": flow["quarter"],
+                    "year": flow["year"],
+                    "current_value": flow["current_value"],
+                    "previous_value": flow["previous_value"],
+                    "flow": flow["flow"],
+                    "flow_formula": flow["flow_formula"],
+                }
+            )
     
     return flow_results
 
@@ -282,14 +294,12 @@ def main():
         print(f"✅ Added foreign investor flow calculations")
         
         # Save to CSV
-        csv_path = 'data/results/retained_earnings_flow.csv'
-        final_results.to_csv(csv_path, index=False, encoding='utf-8')
-        print(f"✅ Saved flow data to {csv_path}")
+        final_results.to_csv(FLOW_CSV_PATH, index=False, encoding="utf-8")
+        print(f"✅ Saved flow data to {FLOW_CSV_PATH}")
         
         # Save to JSON for debugging
-        json_path = 'data/results/retained_earnings_flow.json'
-        final_results.to_json(json_path, orient='records', force_ascii=False, indent=2)
-        print(f"✅ Saved flow data to {json_path}")
+        final_results.to_json(FLOW_JSON_PATH, orient="records", force_ascii=False, indent=2)
+        print(f"✅ Saved flow data to {FLOW_JSON_PATH}")
 
         # New: Save compact per-quarter foreign investor metrics
         compact = final_results[['company_symbol','company_name','quarter','year','reinvested_earnings_flow','net_profit_foreign_investor','distributed_profits_foreign_investor']].copy()
@@ -312,20 +322,17 @@ def main():
     except FileNotFoundError:
         print("⚠️ Warning: ownership data not found, saving basic flow data only")
         # Save basic flow data without ownership calculations
-        csv_path = 'data/results/retained_earnings_flow.csv'
-        flow_df.to_csv(csv_path, index=False, encoding='utf-8')
-        print(f"✅ Saved basic flow data to {csv_path}")
+        flow_df.to_csv(FLOW_CSV_PATH, index=False, encoding="utf-8")
+        print(f"✅ Saved basic flow data to {FLOW_CSV_PATH}")
         
-        json_path = 'data/results/retained_earnings_flow.json'
-        flow_df.to_json(json_path, orient='records', force_ascii=False, indent=2)
-        print(f"✅ Saved basic flow data to {json_path}")
+        flow_df.to_json(FLOW_JSON_PATH, orient="records", force_ascii=False, indent=2)
+        print(f"✅ Saved basic flow data to {FLOW_JSON_PATH}")
         
     except Exception as e:
         print(f"❌ Error processing ownership data: {e}")
         # Save basic flow data as fallback
-        csv_path = 'data/results/retained_earnings_flow.csv'
-        flow_df.to_csv(csv_path, index=False, encoding='utf-8')
-        print(f"✅ Saved basic flow data to {csv_path}")
+        flow_df.to_csv(FLOW_CSV_PATH, index=False, encoding="utf-8")
+        print(f"✅ Saved basic flow data to {FLOW_CSV_PATH}")
     
     print("\n🎉 Flow calculation completed successfully!") 
 

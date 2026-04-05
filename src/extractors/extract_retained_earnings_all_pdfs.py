@@ -140,6 +140,9 @@ class EvidenceScreenshotGenerator:
                     logger.warning(f"Failed to draw unit rectangle: {e}")
                 break
 
+RETAINED_EARNINGS_LABEL = "retained earnings"
+
+
 class RetainedEarningsExtractor:
     def __init__(self):
         self.target_years = []
@@ -256,7 +259,7 @@ class RetainedEarningsExtractor:
                         # Look for retained earnings row
                         for row_index in range(table.GetRowCount()):
                             first_col = table.GetText(row_index, 0).strip().lower()
-                            if first_col == 'retained earnings':
+                            if first_col == RETAINED_EARNINGS_LABEL:
                                 # Found retained earnings row, extract values
                                 for year in self.target_years:
                                     for col_index in range(table.GetColumnCount()):
@@ -301,7 +304,7 @@ class RetainedEarningsExtractor:
                 df = table.df
                 # Look for retained earnings row
                 for i, row in df.iterrows():
-                    if 'retained earnings' in str(row.iloc[0]).lower():
+                    if RETAINED_EARNINGS_LABEL in str(row.iloc[0]).lower():
                         # Found retained earnings row, look for years
                         for year in self.target_years:
                             for col_idx, col_name in enumerate(df.columns):
@@ -348,7 +351,7 @@ class RetainedEarningsExtractor:
             # Look for retained earnings line
             lines = text.split('\n')
             for i, line in enumerate(lines):
-                if 'retained earnings' in line.lower():
+                if RETAINED_EARNINGS_LABEL in line.lower():
                     # Look for numbers in nearby lines
                     for j in range(i+1, min(i+10, len(lines))):
                         next_line = lines[j]

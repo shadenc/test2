@@ -24,6 +24,255 @@ ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', '*')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# --- Path fragments & messages (deduplicated; Sonar / maintainability) ---
+SCREENSHOTS_RELPATH = "output/screenshots"
+FLOW_CSV_RELPATH = "data/results/retained_earnings_flow.csv"
+RESULTS_JSON_RELPATH = "data/results/retained_earnings_results.json"
+REINVESTED_CSV_RELPATH = "data/results/reinvested_earnings_results.csv"
+QUARTERLY_NET_PROFIT_RELPATH = "data/results/quarterly_net_profit.json"
+RUNTIME_STOP_PDFS_FLAG = "data/runtime/stop_pdfs_pipeline.flag"
+RUNTIME_PDFS_PROGRESS_JSON = "data/runtime/pdfs_progress.json"
+RUNTIME_STOP_NET_FLAG = "data/runtime/stop_net_profit.flag"
+RUNTIME_NET_PROGRESS_JSON = "data/runtime/net_profit_progress.json"
+SCRIPT_CALCULATE_REINVESTED = "src/calculators/calculate_reinvested_earnings.py"
+SCRIPT_GENERATE_SCREENSHOTS = "src/utils/generate_evidence_screenshots.py"
+MSG_INTERNAL_ERROR = "Internal server error"
+MSG_FILE_NOT_FOUND = "File not found"
+MSG_OWNERSHIP_UPDATED_OK = "Ownership data updated successfully"
+MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def run_quarterly_refresh_and_archive(project_root: Path) -> None:
+    """
+    Quarterly refresh: recalc, screenshots, export, archive.
+    Module-level to keep create_app() cognitive complexity low.
+    """
+    try:
+        logger.info("[Scheduler] Running quarterly refresh and archive...")
+
+        logger.info("[Scheduler] Step 1: Recalculating reinvested earnings...")
+        subprocess.run(
+            [sys.executable, SCRIPT_CALCULATE_REINVESTED],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=str(project_root),
+        )
+        logger.info("[Scheduler] ✅ Reinvested earnings calculation completed")
+
+        logger.info("[Scheduler] Step 2: Regenerating evidence screenshots...")
+        subprocess.run(
+            [sys.executable, SCRIPT_GENERATE_SCREENSHOTS],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=str(project_root),
+        )
+        logger.info("[Scheduler] ✅ Evidence screenshots regeneration completed")
+
+        logger.info("[Scheduler] Step 3: Exporting dashboard table for each quarter...")
+
+        from src.utils.export_to_excel import ExcelExporter
+
+        exporter = ExcelExporter()
+
+        ownership_json_path = project_root / "data/ownership/foreign_ownership_data.json"
+        if not ownership_json_path.exists():
+            logger.error("[Scheduler] ❌ Ownership data file not found")
+            return
+
+        with open(ownership_json_path, "r", encoding="utf-8") as f:
+            ownership_data = json.load(f)
+
+        csv_path = project_root / FLOW_CSV_RELPATH
+        if not csv_path.exists():
+            logger.error("[Scheduler] ❌ Retained earnings flow data file not found")
+            return
+
+        flow_data = pd.read_csv(csv_path)
+
+        net_profit_path = project_root / QUARTERLY_NET_PROFIT_RELPATH
+        net_profit_data = {}
+        if net_profit_path.exists():
+            with open(net_profit_path, "r", encoding="utf-8") as f:
+                net_profit_raw = json.load(f)
+                for company in net_profit_raw:
+                    symbol = company.get("company_symbol")
+                    if symbol:
+                        net_profit_data[symbol] = company
+
+        now = datetime.now()
+        current_month = now.month
+        current_year = now.year
+
+        if current_month in [1, 2, 3]:
+            current_quarter = "Q1"
+            previous_quarter = "Q4"
+            previous_year = current_year - 1
+        elif current_month in [4, 5, 6]:
+            current_quarter = "Q2"
+            previous_quarter = "Q1"
+            previous_year = current_year
+        elif current_month in [7, 8, 9]:
+            current_quarter = "Q3"
+            previous_quarter = "Q2"
+            previous_year = current_year
+        else:
+            current_quarter = "Q4"
+            previous_quarter = "Q3"
+            previous_year = current_year
+
+        logger.info(f"[Scheduler] Current quarter: {current_quarter} {current_year}")
+        logger.info(f"[Scheduler] Previous quarter: {previous_quarter} {previous_year}")
+
+        flow_map = {}
+        for _, row in flow_data.iterrows():
+            symbol = str(row.get("company_symbol", "")).strip()
+            quarter = str(row.get("quarter", "")).strip()
+            if symbol and quarter:
+                if symbol not in flow_map:
+                    flow_map[symbol] = {}
+                flow_map[symbol][quarter] = {
+                    "previous_value": row.get("previous_value", ""),
+                    "current_value": row.get("current_value", ""),
+                    "flow": row.get("flow", ""),
+                    "flow_formula": row.get("flow_formula", ""),
+                    "year": row.get("year", ""),
+                    "reinvested_earnings_flow": row.get("reinvested_earnings_flow", ""),
+                    "net_profit_foreign_investor": row.get("net_profit_foreign_investor", ""),
+                    "distributed_profits_foreign_investor": row.get(
+                        "distributed_profits_foreign_investor", ""
+                    ),
+                }
+
+        logger.info(f"[Scheduler] Exporting data for {current_quarter} {current_year}...")
+
+        merged_data = []
+        for ownership_row in ownership_data:
+            symbol = str(ownership_row.get("symbol", "")).strip()
+            flow_info = flow_map.get(symbol, {})
+            net_profit_info = net_profit_data.get(symbol, {})
+
+            quarter_data = flow_info.get(current_quarter, {})
+
+            net_profit_value = "لايوجد"
+            if net_profit_info and "quarterly_net_profit" in net_profit_info:
+                quarter_key = f"{current_quarter} {current_year}"
+                if quarter_key in net_profit_info["quarterly_net_profit"]:
+                    net_profit_value = net_profit_info["quarterly_net_profit"][quarter_key]
+
+            if current_quarter == "Q1":
+                previous_quarter_header = f"{previous_year}Q4"
+            else:
+                previous_quarter_header = f"{current_year}{previous_quarter}"
+
+            current_quarter_header = f"{current_year}{current_quarter}"
+
+            def format_value(value):
+                if value == "" or value is None:
+                    return "لايوجد"
+                if value == 0 or (isinstance(value, str) and value.strip() == "0"):
+                    return "0"
+                return value
+
+            merged_row = {
+                "رمز الشركة": symbol,
+                "الشركة": ownership_row.get("company_name", ""),
+                "ملكية جميع المستثمرين الأجانب": ownership_row.get("foreign_ownership", ""),
+                "الملكية الحالية": ownership_row.get("max_allowed", ""),
+                "ملكية المستثمر الاستراتيجي الأجنبي": ownership_row.get("investor_limit", ""),
+                f"الأرباح المبقاة للربع السابق ({previous_quarter_header})": format_value(
+                    quarter_data.get("previous_value", "")
+                ),
+                f"الأرباح المبقاة للربع الحالي ({current_quarter_header})": format_value(
+                    quarter_data.get("current_value", "")
+                ),
+                "حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)": format_value(
+                    quarter_data.get("flow", "")
+                ),
+                "تدفق الأرباح المبقاة للمستثمر الأجنبي": format_value(
+                    quarter_data.get("reinvested_earnings_flow", "")
+                ),
+                "صافي الربح": net_profit_value,
+                "صافي الربح للمستثمر الأجنبي": format_value(
+                    quarter_data.get("net_profit_foreign_investor", "")
+                ),
+                "الأرباح الموزعة للمستثمر الأجنبي": format_value(
+                    quarter_data.get("distributed_profits_foreign_investor", "")
+                ),
+            }
+            merged_data.append(merged_row)
+
+        data = pd.DataFrame(merged_data)
+
+        output_path = exporter.export_dashboard_table(data)
+
+        if output_path:
+            archive_dir = project_root / f"output/archives/{current_year}_{current_quarter}"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+
+            archive_excel_name = f"financial_analysis_{current_year}_{current_quarter}.xlsx"
+            archive_excel_path = archive_dir / archive_excel_name
+            shutil.copy(output_path, archive_excel_path)
+
+            archive_csv_name = f"retained_earnings_flow_{current_year}_{current_quarter}.csv"
+            archive_csv_path = archive_dir / archive_csv_name
+            shutil.copy(csv_path, archive_csv_path)
+
+            screenshots_archive_dir = archive_dir / "evidence_screenshots"
+            screenshots_archive_dir.mkdir(exist_ok=True)
+
+            screenshots_dir = project_root / SCREENSHOTS_RELPATH
+            if screenshots_dir.exists():
+                quarter_pattern = f"*_{current_quarter.lower()}_{current_year}_evidence.png"
+                for screenshot in screenshots_dir.glob(quarter_pattern):
+                    shutil.copy(screenshot, screenshots_archive_dir / screenshot.name)
+
+            logger.info(f"[Scheduler] ✅ Archived results to {archive_dir}")
+            logger.info(f"[Scheduler] ✅ Excel file: {archive_excel_name}")
+            logger.info(f"[Scheduler] ✅ CSV file: {archive_csv_name}")
+            logger.info("[Scheduler] ✅ Evidence screenshots copied")
+
+        else:
+            logger.error("[Scheduler] ❌ Failed to export Excel file")
+
+    except Exception as e:
+        logger.error(f"[Scheduler] ❌ Error in scheduled refresh: {e}")
+        import traceback
+
+        logger.error(f"[Scheduler] Traceback: {traceback.format_exc()}")
+
+
+def run_daily_ownership_scraper_and_recalc(project_root: Path) -> None:
+    """Daily job: ownership JSON + recalc flows."""
+    try:
+        logger.info("[Scheduler] Running daily ownership update and recalculation...")
+        try:
+            logger.info("[Scheduler] Step 1: Updating foreign ownership via Tadawul scraper...")
+            from src.scrapers.ownership import TadawulOwnershipScraper
+
+            scraper = TadawulOwnershipScraper(base_url="https://www.saudiexchange.sa")
+            scraper.scrape_to_files(output_dir=str(project_root / "data/ownership"), debug=False)
+            logger.info("[Scheduler] ✅ Ownership data updated")
+        except Exception as e:
+            logger.error(f"[Scheduler] ❌ Ownership update failed: {e}")
+
+        try:
+            logger.info("[Scheduler] Step 2: Recalculating reinvested earnings flows...")
+            subprocess.run(
+                [sys.executable, SCRIPT_CALCULATE_REINVESTED],
+                check=True,
+                capture_output=True,
+                text=True,
+                cwd=str(project_root),
+            )
+            logger.info("[Scheduler] ✅ Recalculation finished")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"[Scheduler] ❌ Recalculation failed: {e.stderr}")
+    except Exception as e:
+        logger.error(f"[Scheduler] ❌ Unexpected error in daily ownership job: {e}")
+
+
 def create_app():
     app = Flask(__name__)
     # Allow CORS from React frontend - supports both localhost and production
@@ -32,11 +281,11 @@ def create_app():
 
     # Always resolve paths relative to the project root
     PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
-    SCREENSHOTS_DIR = PROJECT_ROOT / "output/screenshots"
-    RESULTS_FILE = PROJECT_ROOT / "data/results/retained_earnings_results.json"
+    SCREENSHOTS_DIR = PROJECT_ROOT / SCREENSHOTS_RELPATH
+    RESULTS_FILE = PROJECT_ROOT / RESULTS_JSON_RELPATH
     METADATA_FILE = SCREENSHOTS_DIR / "evidence_metadata.json"
-    CSV_FILE = PROJECT_ROOT / "data/results/reinvested_earnings_results.csv"
-    FLOW_CSV_FILE = PROJECT_ROOT / "data/results/retained_earnings_flow.csv"  # New flow data file
+    CSV_FILE = PROJECT_ROOT / REINVESTED_CSV_RELPATH
+    FLOW_CSV_FILE = PROJECT_ROOT / FLOW_CSV_RELPATH
 
     @app.route('/api/evidence/<company_symbol>.png')
     def get_evidence_screenshot(company_symbol):
@@ -94,7 +343,7 @@ def create_app():
             
         except Exception as e:
             logger.error(f"Error serving screenshot for {company_symbol}: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            return jsonify({"error": MSG_INTERNAL_ERROR}), 500
 
     @app.route('/api/extractions')
     def get_extractions():
@@ -133,7 +382,7 @@ def create_app():
             
         except Exception as e:
             logger.error(f"Error serving extractions: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            return jsonify({"error": MSG_INTERNAL_ERROR}), 500
 
     @app.route('/api/extractions/<company_symbol>')
     def get_extraction_by_company(company_symbol):
@@ -208,7 +457,7 @@ def create_app():
             
         except Exception as e:
             logger.error(f"Error serving extraction for {company_symbol}: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            return jsonify({"error": MSG_INTERNAL_ERROR}), 500
 
     @app.route('/api/evidence/metadata')
     def get_evidence_metadata():
@@ -229,7 +478,7 @@ def create_app():
             
         except Exception as e:
             logger.error(f"Error serving evidence metadata: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            return jsonify({"error": MSG_INTERNAL_ERROR}), 500
 
     @app.route('/api/evidence/<company_symbol>')
     def get_evidence(company_symbol):
@@ -280,13 +529,13 @@ def create_app():
             
         except Exception as e:
             logger.error(f"Error serving evidence for {company_symbol}: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            return jsonify({"error": MSG_INTERNAL_ERROR}), 500
 
     @app.route('/api/retained_earnings_flow.csv')
     def get_retained_earnings_flow_csv():
         """Get retained earnings flow data as CSV."""
         try:
-            csv_path = PROJECT_ROOT / "data/results/retained_earnings_flow.csv"
+            csv_path = PROJECT_ROOT / FLOW_CSV_RELPATH
             if not csv_path.exists():
                 return "No data available", 404
                 
@@ -325,7 +574,7 @@ def create_app():
             
         except Exception as e:
             logger.error(f"Error serving CSV: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            return jsonify({"error": MSG_INTERNAL_ERROR}), 500
 
     @app.route('/api/refresh', methods=['POST'])
     def refresh_data():
@@ -347,7 +596,7 @@ def create_app():
                     text=True,
                     timeout=600
                 )
-                logger.info("Ownership data updated successfully")
+                logger.info(MSG_OWNERSHIP_UPDATED_OK)
                 if result.stdout:
                     logger.debug(result.stdout)
                 if result.stderr:
@@ -362,7 +611,7 @@ def create_app():
             # 1. Recalculate reinvested earnings (this is the main step)
             logger.info("Recalculating reinvested earnings...")
             try:
-                subprocess.run([sys.executable, 'src/calculators/calculate_reinvested_earnings.py'], 
+                subprocess.run([sys.executable, SCRIPT_CALCULATE_REINVESTED], 
                              check=True, capture_output=True, text=True)
                 logger.info("Reinvested earnings calculation completed successfully")
             except subprocess.CalledProcessError as e:
@@ -375,7 +624,7 @@ def create_app():
             # 2. Regenerate evidence screenshots (optional)
             logger.info("Regenerating evidence screenshots...")
             try:
-                subprocess.run([sys.executable, 'src/utils/generate_evidence_screenshots.py'], 
+                subprocess.run([sys.executable, SCRIPT_GENERATE_SCREENSHOTS], 
                              check=True, capture_output=True, text=True)
                 logger.info("Evidence screenshots regeneration completed successfully")
             except subprocess.CalledProcessError as e:
@@ -411,14 +660,14 @@ def create_app():
         try:
             # Clear any stale stop flag from previous runs to avoid auto-stop
             try:
-                stop_flag_file = project_root / 'data/runtime/stop_pdfs_pipeline.flag'
+                stop_flag_file = project_root / RUNTIME_STOP_PDFS_FLAG
                 if stop_flag_file.exists():
                     stop_flag_file.unlink()
             except Exception:
                 pass
             # mark progress running
             try:
-                progress_path = project_root / 'data/runtime/pdfs_progress.json'
+                progress_path = project_root / RUNTIME_PDFS_PROGRESS_JSON
                 progress_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(progress_path, 'w', encoding='utf-8') as f:
                     json.dump({"status": "running", "processed": 0}, f)
@@ -426,20 +675,20 @@ def create_app():
                 pass
             logger.info("[Pipeline] Starting hybrid downloader...")
             env = os.environ.copy()
-            env.setdefault('STOP_FLAG_FILE', str(project_root / 'data/runtime/stop_pdfs_pipeline.flag'))
-            env.setdefault('PROGRESS_FILE', str(project_root / 'data/runtime/pdfs_progress.json'))
+            env.setdefault('STOP_FLAG_FILE', str(project_root / RUNTIME_STOP_PDFS_FLAG))
+            env.setdefault('PROGRESS_FILE', str(project_root / RUNTIME_PDFS_PROGRESS_JSON))
             subprocess.run([sys.executable, str(downloader)], cwd=str(project_root), check=True, text=True, env=env)
         except subprocess.CalledProcessError as e:
             logger.error(f"[Pipeline] Downloader failed: {e}")
             return
         # If a stop was requested, do not run extractor/calc/screenshots here.
         try:
-            stop_flag_file = project_root / 'data/runtime/stop_pdfs_pipeline.flag'
+            stop_flag_file = project_root / RUNTIME_STOP_PDFS_FLAG
             if stop_flag_file.exists():
                 logger.info("[Pipeline] Stop flag detected after downloader. Skipping extractor/calc/screenshots (finalization thread handles them).")
                 # Mark completed and return
                 try:
-                    progress_path = project_root / 'data/runtime/pdfs_progress.json'
+                    progress_path = project_root / RUNTIME_PDFS_PROGRESS_JSON
                     with open(progress_path, 'w', encoding='utf-8') as f:
                         json.dump({"status": "completed"}, f)
                 except Exception:
@@ -455,27 +704,27 @@ def create_app():
             return
         try:
             logger.info("[Pipeline] Recalculating reinvested earnings...")
-            calc = project_root / 'src/calculators/calculate_reinvested_earnings.py'
+            calc = project_root / SCRIPT_CALCULATE_REINVESTED
             subprocess.run([sys.executable, str(calc)], cwd=str(project_root), check=True, text=True)
         except subprocess.CalledProcessError as e:
             logger.error(f"[Pipeline] Calculation failed: {e}")
             return
         try:
             logger.info("[Pipeline] Regenerating evidence screenshots...")
-            shots = project_root / 'src/utils/generate_evidence_screenshots.py'
+            shots = project_root / SCRIPT_GENERATE_SCREENSHOTS
             subprocess.run([sys.executable, str(shots)], cwd=str(project_root), check=True, text=True)
         except subprocess.CalledProcessError as e:
             logger.warning(f"[Pipeline] Screenshot regeneration failed: {e}")
         # mark completed
         try:
-            progress_path = project_root / 'data/runtime/pdfs_progress.json'
+            progress_path = project_root / RUNTIME_PDFS_PROGRESS_JSON
             with open(progress_path, 'w', encoding='utf-8') as f:
                 json.dump({"status": "completed"}, f)
         except Exception:
             pass
         # Ensure stop flag is cleared for next runs
         try:
-            stop_flag_file = project_root / 'data/runtime/stop_pdfs_pipeline.flag'
+            stop_flag_file = project_root / RUNTIME_STOP_PDFS_FLAG
             if stop_flag_file.exists():
                 stop_flag_file.unlink()
         except Exception:
@@ -519,29 +768,29 @@ def create_app():
                     logger.info("[NetProfit] Starting scraper...")
                     # Clear any stale stop flag
                     try:
-                        net_stop_flag = project_root / 'data/runtime/stop_net_profit.flag'
+                        net_stop_flag = project_root / RUNTIME_STOP_NET_FLAG
                         if net_stop_flag.exists():
                             net_stop_flag.unlink()
                     except Exception:
                         pass
                     # Initialize progress file as running
                     try:
-                        net_progress = project_root / 'data/runtime/net_profit_progress.json'
+                        net_progress = project_root / RUNTIME_NET_PROGRESS_JSON
                         net_progress.parent.mkdir(parents=True, exist_ok=True)
                         with open(net_progress, 'w', encoding='utf-8') as f:
                             json.dump({"status": "running", "processed": 0}, f)
                     except Exception:
                         pass
                     env = os.environ.copy()
-                    env.setdefault('STOP_FLAG_FILE', str(project_root / 'data/runtime/stop_net_profit.flag'))
-                    env.setdefault('PROGRESS_FILE', str(project_root / 'data/runtime/net_profit_progress.json'))
+                    env.setdefault('STOP_FLAG_FILE', str(project_root / RUNTIME_STOP_NET_FLAG))
+                    env.setdefault('PROGRESS_FILE', str(project_root / RUNTIME_NET_PROGRESS_JSON))
                     subprocess.run([sys.executable, str(scraper)], cwd=str(project_root), check=True, text=True, env=env)
                 except subprocess.CalledProcessError as e:
                     logger.error(f"[NetProfit] Scraper failed: {e}")
                     return
                 try:
                     logger.info("[NetProfit] Recalculating flows after net profit update...")
-                    calc = project_root / 'src/calculators/calculate_reinvested_earnings.py'
+                    calc = project_root / SCRIPT_CALCULATE_REINVESTED
                     subprocess.run([sys.executable, str(calc)], cwd=str(project_root), check=True, text=True)
                     logger.info("[NetProfit] ✅ Completed")
                 except subprocess.CalledProcessError as e:
@@ -549,7 +798,7 @@ def create_app():
                 finally:
                     # Ensure stop flag cleared at end
                     try:
-                        net_stop_flag = project_root / 'data/runtime/stop_net_profit.flag'
+                        net_stop_flag = project_root / RUNTIME_STOP_NET_FLAG
                         if net_stop_flag.exists():
                             net_stop_flag.unlink()
                     except Exception:
@@ -563,7 +812,7 @@ def create_app():
 
     @app.route('/api/pdfs/status', methods=['GET'])
     def pdfs_status():
-        progress_file = PROJECT_ROOT / 'data/runtime/pdfs_progress.json'
+        progress_file = PROJECT_ROOT / RUNTIME_PDFS_PROGRESS_JSON
         if progress_file.exists():
             try:
                 with open(progress_file, 'r', encoding='utf-8') as f:
@@ -574,7 +823,7 @@ def create_app():
 
     @app.route('/api/net_profit/status', methods=['GET'])
     def net_profit_status():
-        progress_file = PROJECT_ROOT / 'data/runtime/net_profit_progress.json'
+        progress_file = PROJECT_ROOT / RUNTIME_NET_PROGRESS_JSON
         if progress_file.exists():
             try:
                 with open(progress_file, 'r', encoding='utf-8') as f:
@@ -585,7 +834,7 @@ def create_app():
 
     @app.route('/api/pdfs/stop', methods=['POST'])
     def stop_pdfs_pipeline():
-        flag = PROJECT_ROOT / 'data/runtime/stop_pdfs_pipeline.flag'
+        flag = PROJECT_ROOT / RUNTIME_STOP_PDFS_FLAG
         try:
             flag.parent.mkdir(parents=True, exist_ok=True)
             flag.write_text('stop', encoding='utf-8')
@@ -594,14 +843,14 @@ def create_app():
                 try:
                     # Mark status as finalizing for the UI
                     try:
-                        progress_path = PROJECT_ROOT / 'data/runtime/pdfs_progress.json'
+                        progress_path = PROJECT_ROOT / RUNTIME_PDFS_PROGRESS_JSON
                         with open(progress_path, 'w', encoding='utf-8') as f:
                             json.dump({"status": "finalizing"}, f)
                     except Exception:
                         pass
                     extractor = PROJECT_ROOT / 'src/extractors/extract_retained_earnings_all_pdfs.py'
-                    calc = PROJECT_ROOT / 'src/calculators/calculate_reinvested_earnings.py'
-                    shots = PROJECT_ROOT / 'src/utils/generate_evidence_screenshots.py'
+                    calc = PROJECT_ROOT / SCRIPT_CALCULATE_REINVESTED
+                    shots = PROJECT_ROOT / SCRIPT_GENERATE_SCREENSHOTS
                     logger.info("[Pipeline] Stop requested: running extractor on downloaded PDFs...")
                     env = os.environ.copy()
                     env.setdefault('STOP_FLAG_FILE', str(flag))
@@ -622,7 +871,7 @@ def create_app():
                     subprocess.run([sys.executable, str(shots)], cwd=str(PROJECT_ROOT), check=True, text=True)
                     # mark completed
                     try:
-                        progress_path = PROJECT_ROOT / 'data/runtime/pdfs_progress.json'
+                        progress_path = PROJECT_ROOT / RUNTIME_PDFS_PROGRESS_JSON
                         with open(progress_path, 'w', encoding='utf-8') as f:
                             json.dump({"status": "completed"}, f)
                     except Exception:
@@ -637,7 +886,7 @@ def create_app():
 
     @app.route('/api/net_profit/stop', methods=['POST'])
     def stop_net_profit():
-        flag = PROJECT_ROOT / 'data/runtime/stop_net_profit.flag'
+        flag = PROJECT_ROOT / RUNTIME_STOP_NET_FLAG
         try:
             flag.parent.mkdir(parents=True, exist_ok=True)
             flag.write_text('stop', encoding='utf-8')
@@ -720,7 +969,7 @@ def create_app():
 
         # Trigger recalculation
         try:
-            subprocess.run(["python", str(PROJECT_ROOT / "src/calculators/calculate_reinvested_earnings.py")], check=True)
+            subprocess.run([sys.executable, str(PROJECT_ROOT / SCRIPT_CALCULATE_REINVESTED)], check=True)
         except Exception as e:
             return jsonify({'error': f'Correction saved, but recalculation failed: {e}'}), 500
 
@@ -757,7 +1006,7 @@ def create_app():
 
         try:
             # Load the retained earnings flow data (CSV) which contains most of the calculated fields
-            csv_path = PROJECT_ROOT / "data/results/retained_earnings_flow.csv"
+            csv_path = PROJECT_ROOT / FLOW_CSV_RELPATH
             if not csv_path.exists():
                 logger.error(f"CSV file not found: {csv_path}")
                 return jsonify({'error': 'Flow data file not found'}), 404
@@ -884,13 +1133,13 @@ def create_app():
             logger.info("Regenerating flow data with corrections for Excel export...")
             try:
                 # Trigger recalculation to get latest corrected data
-                recalc_result = subprocess.run([sys.executable, 'src/calculators/calculate_reinvested_earnings.py'], 
+                recalc_result = subprocess.run([sys.executable, SCRIPT_CALCULATE_REINVESTED], 
                                              capture_output=True, text=True, cwd=str(project_root))
                 if recalc_result.returncode != 0:
                     logger.warning(f"Recalculation had issues: {recalc_result.stderr}")
                 
                 # Now load the updated CSV
-                csv_path = project_root / "data/results/retained_earnings_flow.csv"
+                csv_path = project_root / FLOW_CSV_RELPATH
                 if not csv_path.exists():
                     return jsonify({"error": "Retained earnings flow data file not found"}), 404
                 
@@ -920,7 +1169,7 @@ def create_app():
                     }
             
             # Load net profit data
-            net_profit_path = project_root / "data/results/quarterly_net_profit.json"
+            net_profit_path = project_root / QUARTERLY_NET_PROFIT_RELPATH
             net_profit_data = {}
             if net_profit_path.exists():
                 with open(net_profit_path, 'r', encoding='utf-8') as f:
@@ -1062,7 +1311,7 @@ def create_app():
                     output_path,
                     as_attachment=True,
                     download_name=filename,
-                    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                    mimetype=MIME_XLSX
                 )
             else:
                 return jsonify({"error": "Failed to create Excel file"}), 500
@@ -1086,10 +1335,10 @@ def create_app():
                     logger.info("Attempting to run ownership scraper...")
                     result = subprocess.run(['python', str(ownership_script)], 
                                          check=True, capture_output=True, text=True, timeout=300)
-                    logger.info("Ownership data updated successfully")
+                    logger.info(MSG_OWNERSHIP_UPDATED_OK)
                     return jsonify({
                         "status": "success", 
-                        "message": "Ownership data updated successfully"
+                        "message": MSG_OWNERSHIP_UPDATED_OK
                     }), 200
                 except subprocess.TimeoutExpired:
                     logger.error("Ownership scraper timed out")
@@ -1165,8 +1414,8 @@ def create_app():
         # year_q is like 2024_Q2
         file_path = archives_dir / year_q / f'financial_analysis_{year_q}.xlsx'
         if not file_path.exists():
-            return jsonify({'error': 'File not found'}), 404
-        return send_file(str(file_path), as_attachment=True, download_name=f'ownership_{year_q}.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            return jsonify({'error': MSG_FILE_NOT_FOUND}), 404
+        return send_file(str(file_path), as_attachment=True, download_name=f'ownership_{year_q}.xlsx', mimetype=MIME_XLSX)
 
     @app.route('/api/user_exports')
     def list_user_exports():
@@ -1199,8 +1448,8 @@ def create_app():
         user_exports_dir = project_root / 'output' / 'excel'
         file_path = user_exports_dir / filename
         if not file_path.exists():
-            return jsonify({'error': 'File not found'}), 404
-        return send_file(str(file_path), as_attachment=True, download_name=filename, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            return jsonify({'error': MSG_FILE_NOT_FOUND}), 404
+        return send_file(str(file_path), as_attachment=True, download_name=filename, mimetype=MIME_XLSX)
 
     @app.route('/api/user_exports/<filename>', methods=['DELETE'])
     def delete_user_export(filename):
@@ -1212,7 +1461,7 @@ def create_app():
         user_exports_dir = project_root / 'output' / 'excel'
         file_path = user_exports_dir / filename
         if not file_path.exists():
-            return jsonify({'error': 'File not found'}), 404
+            return jsonify({'error': MSG_FILE_NOT_FOUND}), 404
         try:
             file_path.unlink()
             return jsonify({'status': 'success', 'message': 'File deleted'})
@@ -1223,7 +1472,7 @@ def create_app():
     def get_net_profit():
         """Get quarterly net profit data for all companies."""
         try:
-            net_profit_file = PROJECT_ROOT / "data/results/quarterly_net_profit.json"
+            net_profit_file = PROJECT_ROOT / QUARTERLY_NET_PROFIT_RELPATH
             if not net_profit_file.exists():
                 return jsonify({'error': 'Net profit data not found'}), 404
                 
@@ -1345,7 +1594,7 @@ def create_app():
             
         except Exception as e:
             logger.error(f"Error getting quarter mapping for {company_symbol}: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            return jsonify({"error": MSG_INTERNAL_ERROR}), 500
 
     @app.route('/api/evidence/<company_symbol>/previous_quarter')
     def get_previous_quarter_evidence(company_symbol):
@@ -1407,7 +1656,7 @@ def create_app():
             
         except Exception as e:
             logger.error(f"Error getting previous quarter evidence for {company_symbol}: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            return jsonify({"error": MSG_INTERNAL_ERROR}), 500
 
     @app.route('/api/trigger_quarterly_archive', methods=['POST'])
     def trigger_quarterly_archive():
@@ -1418,7 +1667,7 @@ def create_app():
             logger.info("Manual quarterly archive trigger requested...")
             
             # Call the scheduled function directly
-            scheduled_refresh_and_archive()
+            run_quarterly_refresh_and_archive(PROJECT_ROOT)
             
             return jsonify({
                 "status": "success", 
@@ -1432,293 +1681,40 @@ def create_app():
                 "message": f"Quarterly archiving failed: {str(e)}"
             }), 500
 
-    # --- Quarterly Scheduler Setup ---
-    def scheduled_refresh_and_archive():
-        """
-        Enhanced quarterly refresh and archive function that:
-        1. Automatically detects current quarter
-        2. Uses the correct data sources (retained_earnings_flow.csv)
-        3. Creates proper quarterly archives with correct naming
-        4. Handles the quarter mapping logic properly
-        """
-        try:
-            logger.info("[Scheduler] Running quarterly refresh and archive...")
-            
-            # 1. Recalculate reinvested earnings
-            logger.info("[Scheduler] Step 1: Recalculating reinvested earnings...")
-            subprocess.run(['python', 'src/calculators/calculate_reinvested_earnings.py'], 
-                         check=True, capture_output=True, text=True)
-            logger.info("[Scheduler] ✅ Reinvested earnings calculation completed")
-            
-            # 2. Regenerate evidence screenshots
-            logger.info("[Scheduler] Step 2: Regenerating evidence screenshots...")
-            subprocess.run(['python', 'src/utils/generate_evidence_screenshots.py'], 
-                         check=True, capture_output=True, text=True)
-            logger.info("[Scheduler] ✅ Evidence screenshots regeneration completed")
-            
-            # 3. Export Dashboard Table for each quarter (same as تصدير الجدول button)
-            logger.info("[Scheduler] Step 3: Exporting dashboard table for each quarter...")
-            
-            import pandas as pd
-            import json
-            from datetime import datetime
-            from pathlib import Path
-            
-            project_root = Path(__file__).parent.parent.parent
-            
-            # Import ExcelExporter
-            from src.utils.export_to_excel import ExcelExporter
-            exporter = ExcelExporter()
-            
-            # Load foreign ownership data (JSON) - same as export_excel endpoint
-            ownership_json_path = project_root / "data/ownership/foreign_ownership_data.json"
-            if not ownership_json_path.exists():
-                logger.error("[Scheduler] ❌ Ownership data file not found")
-                return
-                
-            with open(ownership_json_path, 'r', encoding='utf-8') as f:
-                ownership_data = json.load(f)
-            
-            # Load retained earnings flow data (CSV) - NEW DATA SOURCE
-            csv_path = project_root / "data/results/retained_earnings_flow.csv"
-            if not csv_path.exists():
-                logger.error("[Scheduler] ❌ Retained earnings flow data file not found")
-                return
-                
-            flow_data = pd.read_csv(csv_path)
-            
-            # Load net profit data
-            net_profit_path = project_root / "data/results/quarterly_net_profit.json"
-            net_profit_data = {}
-            if net_profit_path.exists():
-                with open(net_profit_path, 'r', encoding='utf-8') as f:
-                    net_profit_raw = json.load(f)
-                    for company in net_profit_raw:
-                        symbol = company.get('company_symbol')
-                        if symbol:
-                            net_profit_data[symbol] = company
-            
-            # Get current date and determine quarter
-            now = datetime.now()
-            current_month = now.month
-            current_year = now.year
-            
-            # Determine current quarter
-            if current_month in [1, 2, 3]:
-                current_quarter = "Q1"
-                previous_quarter = "Q4"
-                previous_year = current_year - 1
-            elif current_month in [4, 5, 6]:
-                current_quarter = "Q2"
-                previous_quarter = "Q1"
-                previous_year = current_year
-            elif current_month in [7, 8, 9]:
-                current_quarter = "Q3"
-                previous_quarter = "Q2"
-                previous_year = current_year
-            else:  # 10, 11, 12
-                current_quarter = "Q4"
-                previous_quarter = "Q3"
-                previous_year = current_year
-            
-            logger.info(f"[Scheduler] Current quarter: {current_quarter} {current_year}")
-            logger.info(f"[Scheduler] Previous quarter: {previous_quarter} {previous_year}")
-            
-            # Create a map of flow data by symbol and quarter
-            flow_map = {}
-            for _, row in flow_data.iterrows():
-                symbol = str(row.get('company_symbol', '')).strip()
-                quarter = str(row.get('quarter', '')).strip()
-                if symbol and quarter:
-                    if symbol not in flow_map:
-                        flow_map[symbol] = {}
-                    flow_map[symbol][quarter] = {
-                        'previous_value': row.get('previous_value', ''),
-                        'current_value': row.get('current_value', ''),
-                        'flow': row.get('flow', ''),
-                        'flow_formula': row.get('flow_formula', ''),
-                        'year': row.get('year', ''),
-                        'reinvested_earnings_flow': row.get('reinvested_earnings_flow', ''),
-                        'net_profit_foreign_investor': row.get('net_profit_foreign_investor', ''),
-                        'distributed_profits_foreign_investor': row.get('distributed_profits_foreign_investor', '')
-                    }
-            
-            # Export and archive for the current quarter
-            logger.info(f"[Scheduler] Exporting data for {current_quarter} {current_year}...")
-            
-            # Merge the data for the current quarter
-            merged_data = []
-            for ownership_row in ownership_data:
-                symbol = str(ownership_row.get('symbol', '')).strip()
-                flow_info = flow_map.get(symbol, {})
-                net_profit_info = net_profit_data.get(symbol, {})
-                
-                # Get data for current quarter
-                quarter_data = flow_info.get(current_quarter, {})
-                
-                # Get net profit for this quarter
-                net_profit_value = "لايوجد"
-                if net_profit_info and 'quarterly_net_profit' in net_profit_info:
-                    quarter_key = f"{current_quarter} {current_year}"
-                    if quarter_key in net_profit_info['quarterly_net_profit']:
-                        net_profit_value = net_profit_info['quarterly_net_profit'][quarter_key]
-                
-                # Get previous quarter for header
-                if current_quarter == "Q1":
-                    previous_quarter_header = f"{previous_year}Q4"  # This refers to Annual previous year
-                else:
-                    previous_quarter_header = f"{current_year}{previous_quarter}"
-                
-                # Get current quarter for header
-                current_quarter_header = f"{current_year}{current_quarter}"
-                
-                # Add evidence mapping information
-                evidence_note = ""
-                if current_quarter == "Q1":
-                    evidence_note = "Note: Previous quarter refers to Annual statement screenshot"
-                elif current_quarter == "Q2":
-                    evidence_note = "Note: Previous quarter refers to Q1 statement screenshot"
-                elif current_quarter == "Q3":
-                    evidence_note = "Note: Previous quarter refers to Q2 statement screenshot"
-                elif current_quarter == "Q4":
-                    evidence_note = "Note: Previous quarter refers to Q3 statement screenshot"
-                
-                # Handle values properly - show 0 instead of "لايوجد" when it's actually 0
-                def format_value(value):
-                    if value == '' or value is None:
-                        return 'لايوجد'
-                    elif value == 0 or (isinstance(value, str) and value.strip() == '0'):
-                        return '0'
-                    else:
-                        return value
-                
-                merged_row = {
-                    'رمز الشركة': symbol,
-                    'الشركة': ownership_row.get('company_name', ''),
-                    'ملكية جميع المستثمرين الأجانب': ownership_row.get('foreign_ownership', ''),
-                    'الملكية الحالية': ownership_row.get('max_allowed', ''),
-                    'ملكية المستثمر الاستراتيجي الأجنبي': ownership_row.get('investor_limit', ''),
-                    f'الأرباح المبقاة للربع السابق ({previous_quarter_header})': format_value(quarter_data.get('previous_value', '')),
-                    f'الأرباح المبقاة للربع الحالي ({current_quarter_header})': format_value(quarter_data.get('current_value', '')),
-                    'حجم الزيادة أو النقص في الأرباح المبقاة (التدفق)': format_value(quarter_data.get('flow', '')),
-                    'تدفق الأرباح المبقاة للمستثمر الأجنبي': format_value(quarter_data.get('reinvested_earnings_flow', '')),
-                    'صافي الربح': net_profit_value,
-                    'صافي الربح للمستثمر الأجنبي': format_value(quarter_data.get('net_profit_foreign_investor', '')),
-                    'الأرباح الموزعة للمستثمر الأجنبي': format_value(quarter_data.get('distributed_profits_foreign_investor', ''))
-                }
-                merged_data.append(merged_row)
-            
-            # Convert to DataFrame
-            data = pd.DataFrame(merged_data)
-            
-            # Export dashboard table
-            output_path = exporter.export_dashboard_table(data)
-            
-            if output_path:
-                # 4. Archive results
-                archive_dir = project_root / f"output/archives/{current_year}_{current_quarter}"
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                
-                # Copy the exported Excel file to archives
-                archive_excel_name = f"financial_analysis_{current_year}_{current_quarter}.xlsx"
-                archive_excel_path = archive_dir / archive_excel_name
-                shutil.copy(output_path, archive_excel_path)
-                
-                # Copy the CSV data file
-                archive_csv_name = f"retained_earnings_flow_{current_year}_{current_quarter}.csv"
-                archive_csv_path = archive_dir / archive_csv_name
-                shutil.copy(csv_path, archive_csv_path)
-                
-                # Copy evidence screenshots directory for this quarter
-                screenshots_archive_dir = archive_dir / "evidence_screenshots"
-                screenshots_archive_dir.mkdir(exist_ok=True)
-                
-                # Copy relevant screenshots for this quarter
-                screenshots_dir = project_root / "output/screenshots"
-                if screenshots_dir.exists():
-                    # Copy screenshots that match this quarter
-                    quarter_pattern = f"*_{current_quarter.lower()}_{current_year}_evidence.png"
-                    for screenshot in screenshots_dir.glob(quarter_pattern):
-                        shutil.copy(screenshot, screenshots_archive_dir / screenshot.name)
-                
-                logger.info(f"[Scheduler] ✅ Archived results to {archive_dir}")
-                logger.info(f"[Scheduler] ✅ Excel file: {archive_excel_name}")
-                logger.info(f"[Scheduler] ✅ CSV file: {archive_csv_name}")
-                logger.info(f"[Scheduler] ✅ Evidence screenshots copied")
-                
-            else:
-                logger.error("[Scheduler] ❌ Failed to export Excel file")
-                
-        except Exception as e:
-            logger.error(f"[Scheduler] ❌ Error in scheduled refresh: {e}")
-            import traceback
-            logger.error(f"[Scheduler] Traceback: {traceback.format_exc()}")
-
-    def run_ownership_scraper_and_recalc():
-        """
-        Daily job: update foreign ownership JSON (frontend/public) and then
-        recalculate retained earnings flow so the dashboard reflects latest limits.
-        """
-        try:
-            logger.info("[Scheduler] Running daily ownership update and recalculation...")
-            # 1) Run ownership scraper to update frontend/public/foreign_ownership_data.json
-            try:
-                logger.info("[Scheduler] Step 1: Updating foreign ownership via Tadawul scraper...")
-                # Prefer importing and calling directly to avoid spawning a separate process
-                from src.scrapers.ownership import TadawulOwnershipScraper
-                scraper = TadawulOwnershipScraper(base_url="https://www.saudiexchange.sa")
-                scraper.scrape_to_files(output_dir=str(PROJECT_ROOT / "data/ownership"), debug=False)
-                logger.info("[Scheduler] ✅ Ownership data updated")
-            except Exception as e:
-                logger.error(f"[Scheduler] ❌ Ownership update failed: {e}")
-                # Do not abort; proceed to recalc with existing data
-
-            # 2) Recalculate reinvested earnings/flows
-            try:
-                logger.info("[Scheduler] Step 2: Recalculating reinvested earnings flows...")
-                subprocess.run(['python', 'src/calculators/calculate_reinvested_earnings.py'], 
-                               check=True, capture_output=True, text=True)
-                logger.info("[Scheduler] ✅ Recalculation finished")
-            except subprocess.CalledProcessError as e:
-                logger.error(f"[Scheduler] ❌ Recalculation failed: {e.stderr}")
-        except Exception as e:
-            logger.error(f"[Scheduler] ❌ Unexpected error in daily ownership job: {e}")
-
-    # Start scheduler only once (avoid in child processes)
+    # --- Quarterly Scheduler Setup (jobs call module-level functions to limit create_app complexity) ---
     if os.environ.get('WERKZEUG_RUN_MAIN', 'true') == 'true':
         scheduler = BackgroundScheduler()
-        
-        # Schedule quarterly refresh and archive
-        # Run at the end of each quarter: March 31, June 30, September 30, December 31
+
         scheduler.add_job(
-            scheduled_refresh_and_archive,
+            run_quarterly_refresh_and_archive,
             'cron',
             month='3,6,9,12',
             day='last',
             hour=23,
             minute=59,
+            args=[PROJECT_ROOT],
             id='quarterly_refresh_and_archive',
-            replace_existing=True
+            replace_existing=True,
         )
-        
-        # Also run daily at 2 AM for testing/development (can be removed in production)
+
         scheduler.add_job(
-            scheduled_refresh_and_archive,
+            run_quarterly_refresh_and_archive,
             'cron',
             hour=2,
             minute=0,
+            args=[PROJECT_ROOT],
             id='daily_test_archive',
-            replace_existing=True
+            replace_existing=True,
         )
 
-        # Daily 3:00 AM: update ownership and recalc flows
         scheduler.add_job(
-            run_ownership_scraper_and_recalc,
+            run_daily_ownership_scraper_and_recalc,
             'cron',
             hour=3,
             minute=0,
+            args=[PROJECT_ROOT],
             id='daily_ownership_and_recalc',
-            replace_existing=True
+            replace_existing=True,
         )
         
         scheduler.start()
@@ -1734,13 +1730,13 @@ app = create_app()
 
 # Ensure directories exist for production
 PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
-(PROJECT_ROOT / "output/screenshots").mkdir(parents=True, exist_ok=True)
+(PROJECT_ROOT / SCREENSHOTS_RELPATH).mkdir(parents=True, exist_ok=True)
 (PROJECT_ROOT / "data/results").mkdir(parents=True, exist_ok=True)
 (PROJECT_ROOT / "data/pdfs").mkdir(parents=True, exist_ok=True)
 
 if __name__ == '__main__':
     print(f"Starting Evidence API server...")
-    print(f"Screenshots directory: {PROJECT_ROOT / 'output/screenshots'}")
+    print(f"Screenshots directory: {PROJECT_ROOT / SCREENSHOTS_RELPATH}")
     print(f"API will be available at: http://localhost:5003")
     
     app.run(debug=True, host='0.0.0.0', port=5003) 

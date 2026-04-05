@@ -14,6 +14,10 @@ BASE_URL = "https://www.saudiexchange.sa/wps/portal/saudiexchange/companies/comp
 PDF_DIR = Path("data/pdfs")
 PDF_DIR.mkdir(parents=True, exist_ok=True)
 
+SEARCH_INPUT_SELECTOR = "#query-input"
+DEFAULT_STOP_PDFS_FLAG = "data/runtime/stop_pdfs_pipeline.flag"
+DEFAULT_PDFS_PROGRESS_FILE = "data/runtime/pdfs_progress.json"
+
 # Statement type priorities (most preferred first)
 STATEMENT_PRIORITIES = [
     "annual",
@@ -132,9 +136,9 @@ async def navigate_to_company_profile(page: Page, symbol: str) -> bool:
     print(f"Navigated to search page for symbol {symbol}")
     try:
         # Focus the input, fill the symbol, and submit search
-        await page.wait_for_selector("#query-input", timeout=5000)
-        await page.click("#query-input")
-        await page.fill("#query-input", symbol)
+        await page.wait_for_selector(SEARCH_INPUT_SELECTOR, timeout=5000)
+        await page.click(SEARCH_INPUT_SELECTOR)
+        await page.fill(SEARCH_INPUT_SELECTOR, symbol)
         await page.wait_for_timeout(500)
         # Use only JS click to submit
         await page.evaluate("document.querySelector('div.srchBlueBtn').click()")
@@ -199,7 +203,7 @@ async def get_all_financial_reports(page: Page, symbol: str):
         try:
             await page.wait_for_selector(table_selector, timeout=5000)
             print("Financial statements table loaded with 'Annual' text.")
-        except:
+        except PlaywrightTimeoutError:
             # If that fails, look for any table with financial data
             tables = await page.query_selector_all("table")
             print(f"Found {len(tables)} tables on the page")
@@ -287,7 +291,7 @@ async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year:
     """Download PDF using the working stealth approach, generalized for statement type."""
     try:
         # Respect stop flag before starting any new download
-        stop_flag_env = os.environ.get("STOP_FLAG_FILE", "data/runtime/stop_pdfs_pipeline.flag")
+        stop_flag_env = os.environ.get("STOP_FLAG_FILE", DEFAULT_STOP_PDFS_FLAG)
         stop_flag_path = Path(stop_flag_env)
         if stop_flag_path.exists():
             print("🛑 Stop requested. Skipping new PDF download request.")
@@ -339,7 +343,7 @@ async def process_company_with_retry(browser: Browser, symbol: str, max_retries:
     for attempt in range(max_retries):
         try:
             # Abort early if stop requested
-            stop_flag_env = os.environ.get("STOP_FLAG_FILE", "data/runtime/stop_pdfs_pipeline.flag")
+            stop_flag_env = os.environ.get("STOP_FLAG_FILE", DEFAULT_STOP_PDFS_FLAG)
             if Path(stop_flag_env).exists():
                 print("🛑 Stop requested. Aborting company processing.")
                 return False
@@ -393,13 +397,13 @@ async def download_all_financial_statements():
     
     try:
         # progress reporting
-        progress_path = Path(os.environ.get("PROGRESS_FILE", "data/runtime/pdfs_progress.json"))
+        progress_path = Path(os.environ.get("PROGRESS_FILE", DEFAULT_PDFS_PROGRESS_FILE))
         processed = 0
         success_count = 0
         failed_count = 0
         
         # Stop flag support
-        stop_flag = Path(os.environ.get("STOP_FLAG_FILE", "data/runtime/stop_pdfs_pipeline.flag"))
+        stop_flag = Path(os.environ.get("STOP_FLAG_FILE", DEFAULT_STOP_PDFS_FLAG))
         stop_flag.parent.mkdir(parents=True, exist_ok=True)
 
         for i, symbol in enumerate(companies, 1):

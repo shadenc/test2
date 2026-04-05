@@ -27,6 +27,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+FOREIGN_OWNERSHIP_JSON = "foreign_ownership_data.json"
+
+
 class QuarterlyUpdateOrchestrator:
     """Orchestrates quarterly updates for all three data sources."""
     
@@ -131,7 +134,7 @@ class QuarterlyUpdateOrchestrator:
         """Check what company symbols already exist in ownership data."""
         existing_symbols = set()
         
-        ownership_file = self.frontend_dir / "foreign_ownership_data.json"
+        ownership_file = self.frontend_dir / FOREIGN_OWNERSHIP_JSON
         if not ownership_file.exists():
             return existing_symbols
         
@@ -156,7 +159,7 @@ class QuarterlyUpdateOrchestrator:
                 
                 if new_data:
                     # Save to frontend directory
-                    output_file = self.frontend_dir / "foreign_ownership_data.json"
+                    output_file = self.frontend_dir / FOREIGN_OWNERSHIP_JSON
                     with open(output_file, 'w', encoding='utf-8') as f:
                         json.dump(new_data, f, ensure_ascii=False, indent=2)
                     
@@ -336,7 +339,7 @@ class QuarterlyUpdateOrchestrator:
         
         # Step 2: Get company symbols
         if ownership_success:
-            ownership_file = self.frontend_dir / "foreign_ownership_data.json"
+            ownership_file = self.frontend_dir / FOREIGN_OWNERSHIP_JSON
             with open(ownership_file, 'r', encoding='utf-8') as f:
                 ownership_data = json.load(f)
             
