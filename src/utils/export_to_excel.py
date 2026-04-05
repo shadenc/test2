@@ -35,75 +35,61 @@ class ExcelExporter:
         self.center_alignment = Alignment(horizontal='center', vertical='center')
         self.right_alignment = Alignment(horizontal='right', vertical='center')
 
+    def _format_dashboard_cell(self, value):
+        empty_tokens = ('', 'null', 'undefined', 'nan', 'لايوجد')
+        if not value or not str(value).strip() or str(value).lower() in empty_tokens:
+            return 'لايوجد'
+        try:
+            num_value = float(str(value).replace(',', ''))
+            return f"{num_value:,.0f}" if num_value != 0 else '0'
+        except (ValueError, TypeError):
+            return str(value)
+
+    def _write_dashboard_headers(self, ws, headers):
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = self.header_font
+            cell.fill = self.header_fill
+            cell.alignment = self.right_alignment
+            cell.border = self.border
+
+    def _write_dashboard_data_rows(self, ws, data, headers):
+        for row_idx, (_, row) in enumerate(data.iterrows(), 2):
+            row_data = [self._format_dashboard_cell(row.get(h, '')) for h in headers]
+            for col, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_idx, column=col, value=value)
+                cell.font = self.data_font
+                cell.border = self.border
+                cell.alignment = self.right_alignment
+
+    def _autofit_worksheet_columns(self, ws):
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if cell.value and len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except (TypeError, ValueError, AttributeError):
+                    pass
+            ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
+
     def export_dashboard_table(self, data):
         """
         Export only the dashboard table data in a simple format
         """
         try:
-            # Create workbook
             wb = openpyxl.Workbook()
             ws = wb.active
-            ws.title = "Financial Data"  # Shorter title to avoid Excel issues
-            
-            # Get headers dynamically from the data columns and reverse for RTL layout
-            headers = list(data.columns)[::-1]  # Reverse the order for RTL layout
-            
-            # Add headers
-            for col, header in enumerate(headers, 1):
-                cell = ws.cell(row=1, column=col, value=header)
-                cell.font = self.header_font
-                cell.fill = self.header_fill
-                cell.alignment = self.right_alignment  # Right-align headers for RTL
-                cell.border = self.border
-            
-            # Add data rows
-            for row_idx, (_, row) in enumerate(data.iterrows(), 2):
-                row_data = []
-                for col, header in enumerate(headers, 1):
-                    value = row.get(header, '')
-                    
-                    # Clean and format numeric values
-                    if value and str(value).strip() and str(value).lower() not in ['', 'null', 'undefined', 'nan', 'لايوجد']:
-                        try:
-                            # Convert to float and format if it's a number
-                            num_value = float(str(value).replace(',', ''))
-                            if num_value != 0:  # Only format non-zero numbers
-                                formatted_value = f"{num_value:,.0f}"
-                            else:
-                                formatted_value = '0'
-                        except (ValueError, TypeError):
-                            formatted_value = str(value)
-                    else:
-                        formatted_value = 'لايوجد'
-                    
-                    row_data.append(formatted_value)
-                
-                # Add row data with reversed order for RTL layout
-                for col, value in enumerate(row_data, 1):
-                    cell = ws.cell(row=row_idx, column=col, value=value)
-                    cell.font = self.data_font
-                    cell.border = self.border
-                    cell.alignment = self.right_alignment
-            
-            # Auto-adjust column widths
-            for column in ws.columns:
-                max_length = 0
-                column_letter = column[0].column_letter
-                for cell in column:
-                    try:
-                        if cell.value and len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except (TypeError, ValueError, AttributeError):
-                        pass
-                adjusted_width = min(max_length + 2, 50)
-                ws.column_dimensions[column_letter].width = adjusted_width
-            
-            # Generate filename
+            ws.title = "Financial Data"
+            headers = list(data.columns)[::-1]
+            self._write_dashboard_headers(ws, headers)
+            self._write_dashboard_data_rows(ws, data, headers)
+            self._autofit_worksheet_columns(ws)
+
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"financial_analysis_{timestamp}.xlsx"
             output_path = self.output_dir / filename
-            
-            # Save workbook with error handling
             try:
                 wb.save(str(output_path))
                 logger.info(f"Dashboard table exported: {output_path}")
@@ -111,7 +97,6 @@ class ExcelExporter:
             except Exception as save_error:
                 logger.error(f"Error saving Excel file: {save_error}")
                 return None
-            
         except Exception as e:
             logger.error(f"Error exporting dashboard table: {e}")
             return None

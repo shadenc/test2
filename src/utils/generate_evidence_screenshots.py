@@ -61,15 +61,28 @@ class EvidenceScreenshotGenerator:
                     areas = page.search_for(variant)
                     if areas:
                         doc.close()
-                        logger.info(f"Found value '{variant}' in {pdf_path} page {page_num + 1}")
+                        logger.info(
+                            "Found search match in PDF file=%s page=%s variant_len=%s",
+                            Path(pdf_path).name,
+                            page_num + 1,
+                            len(variant),
+                        )
                         return (page_num, areas[0])  # Return first match
             
             doc.close()
-            logger.warning(f"Could not find any variant of '{search_value}' in {pdf_path}")
+            logger.warning(
+                "Could not find search value in PDF file=%s (tried %s variants)",
+                Path(pdf_path).name,
+                len(unique_variants),
+            )
             return None
             
         except Exception as e:
-            logger.error(f"Error searching PDF {pdf_path}: {e}")
+            logger.error(
+                "Error searching PDF file=%s: %s",
+                Path(pdf_path).name,
+                type(e).__name__,
+            )
             return None
     
     def generate_highlight_screenshot(self, pdf_path: str, search_value: str, company_symbol: str) -> Optional[str]:
@@ -81,7 +94,7 @@ class EvidenceScreenshotGenerator:
             # Find the value location
             result = self.find_value_in_pdf(pdf_path, search_value)
             if not result:
-                logger.warning(f"Could not find value {search_value} in {pdf_path}")
+                logger.warning("Could not find highlight target in PDF file=%s", Path(pdf_path).name)
                 return None
             page_num, rect = result
             # Open PDF and get the page

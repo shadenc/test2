@@ -4,7 +4,7 @@ import re
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import List, Optional, Tuple
 import random
 
 from playwright.async_api import async_playwright, Browser, Page, TimeoutError as PlaywrightTimeoutError
@@ -17,6 +17,24 @@ PDF_DIR.mkdir(parents=True, exist_ok=True)
 SEARCH_INPUT_SELECTOR = "#query-input"
 DEFAULT_STOP_PDFS_FLAG = "data/runtime/stop_pdfs_pipeline.flag"
 DEFAULT_PDFS_PROGRESS_FILE = "data/runtime/pdfs_progress.json"
+
+
+async def _async_write_bytes(path: Path, data: bytes) -> None:
+    def _write() -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    await asyncio.to_thread(_write)
+
+
+async def _async_write_json_file(path: Path, obj: dict) -> None:
+    def _write() -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False)
+
+    await asyncio.to_thread(_write)
+
 
 # Statement type priorities (most preferred first)
 STATEMENT_PRIORITIES = [
@@ -168,70 +186,65 @@ async def navigate_to_company_profile(page: Page, symbol: str) -> bool:
         print(f"❌ Search failed for {symbol}: {e}")
         return False
 
-async def get_all_financial_reports(page: Page, symbol: str):
-    """Find all available financial report PDFs (Annual, Q1-Q4) and their years, filtered for target_year and Q4 of previous year."""
-    if not await navigate_to_company_profile(page, symbol):
-        return []
-    print("On company profile page, waiting for content...")
-    await page.wait_for_timeout(3000)
+
+async def _click_financial_statements_tab(page: Page) -> bool:
     tabs = await page.query_selector_all("li")
+    target = "financial statements and reports"
     try:
-        target_text = "financial statements and reports"
         for tab in tabs:
             tab_text = (await tab.text_content() or "").strip().lower()
-            if target_text in tab_text:
+            if target in tab_text:
                 await tab.scroll_into_view_if_needed()
                 await tab.click()
                 print(f"✅ Clicked tab: {tab_text}")
-                break
-        else:
-            print("❌ 'Financial Statements and Reports' tab not found by substring.")
-            return []
+                return True
+        print("❌ 'Financial Statements and Reports' tab not found by substring.")
+        return False
     except PlaywrightTimeoutError:
         print("❌ Timeout while trying to find financial tab.")
-        return []
+        return False
+
+
+async def _wait_for_financial_table(page: Page) -> bool:
     try:
-        # Wait for any table to appear first
         await page.wait_for_selector("table", timeout=10000)
         print("Table found, waiting for content to load...")
-        
-        # Wait a bit more for dynamic content
         await page.wait_for_timeout(2000)
-        
-        # Try to find the financial statements table
         table_selector = "table:has-text('Annual')"
         try:
             await page.wait_for_selector(table_selector, timeout=5000)
             print("Financial statements table loaded with 'Annual' text.")
         except PlaywrightTimeoutError:
-            # If that fails, look for any table with financial data
             tables = await page.query_selector_all("table")
             print(f"Found {len(tables)} tables on the page")
-            
             for i, table in enumerate(tables):
                 table_text = await table.text_content()
-                if any(term in table_text.lower() for term in ["annual", "quarterly", "financial", "report"]):
+                if any(
+                    term in table_text.lower()
+                    for term in ["annual", "quarterly", "financial", "report"]
+                ):
                     print(f"Table {i} appears to contain financial data")
                     break
             else:
                 print("No table with financial data found")
-                return []
+                return False
+        return True
     except Exception as e:
         print(f"Could not find financial statements table: {e}")
-        return []
+        return False
+
+
+async def _parse_years_from_table_header(page: Page) -> List[int]:
     header_cells = await page.query_selector_all("table thead tr th")
     years = []
     for cell in header_cells:
         text = (await cell.text_content()).strip()
         if text.isdigit():
             years.append(int(text))
-    if not years:
-        print("No years found in table header.")
-        return []
-    rows = await page.query_selector_all("table tbody tr")
-    print(f"Found {len(rows)} rows in financial statements table")
-    
-    # Debug: Print all row contents to understand the structure
+    return years
+
+
+async def _debug_print_table_rows(rows) -> None:
     print("--- Table rows debug ---")
     for i, row in enumerate(rows):
         cells = await row.query_selector_all("td")
@@ -241,50 +254,78 @@ async def get_all_financial_reports(page: Page, symbol: str):
             row_text.append(f"cell{j}: '{cell_text}'")
         print(f"Row {i}: {row_text}")
     print("--- End table debug ---")
-    
+
+
+async def _collect_pdf_links_for_statement_types(
+    page: Page, symbol: str, rows, years: List[int]
+) -> List[Tuple[str, int, str]]:
     statement_types = ["annual", "q1", "q2", "q3", "q4"]
-    found_reports = []
-    
+    found_reports: List[Tuple[str, int, str]] = []
     for stype in statement_types:
         row = None
-        # Search through all rows for this statement type
         for r in rows:
             first_cell = await r.query_selector("td")
-            if first_cell:
-                cell_text = (await first_cell.text_content() or "").strip().lower()
-                # More flexible matching
-                if stype in cell_text or any(term in cell_text for term in ["report", "statement"]):
-                    row = r
-                    print(f"Found row for {stype}: '{cell_text}'")
-                    break
-        
+            if not first_cell:
+                continue
+            cell_text = (await first_cell.text_content() or "").strip().lower()
+            if stype in cell_text or any(t in cell_text for t in ["report", "statement"]):
+                row = r
+                print(f"Found row for {stype}: '{cell_text}'")
+                break
         if not row:
             print(f"No '{stype}' row found in table.")
             continue
-            
         cells = await row.query_selector_all("td")
         print(f"Row for {stype} has {len(cells)} cells")
-        
         for i, year in enumerate(years):
-            cell_index = i + 1  # offset by 1 for the label cell
+            cell_index = i + 1
             if cell_index >= len(cells):
                 continue
             cell = cells[cell_index]
             pdf_link = await cell.query_selector("a[href$='.pdf']")
-            if pdf_link:
-                pdf_url = await pdf_link.get_attribute("href")
-                if pdf_url:
-                    normalized_stype = stype.lower().strip()
-                    print(f"🎯 Found {normalized_stype.upper()} PDF URL for {symbol} {year}: {pdf_url}")
-                    found_reports.append((normalized_stype, year, pdf_url))
-    # Updated filter: Q1, Q2, Q3 of current year and Annual of previous year
-    filtered_reports = []
+            if not pdf_link:
+                continue
+            pdf_url = await pdf_link.get_attribute("href")
+            if pdf_url:
+                normalized = stype.lower().strip()
+                print(f"🎯 Found {normalized.upper()} PDF URL for {symbol} {year}: {pdf_url}")
+                found_reports.append((normalized, year, pdf_url))
+    return found_reports
+
+
+def _filter_reports_for_target_year(found_reports: List[Tuple[str, int, str]]) -> List[Tuple[str, int, str]]:
+    filtered = []
     for stype, year, pdf_url in found_reports:
         if year == target_year and stype in ["q1", "q2", "q3"]:
-            filtered_reports.append((stype, year, pdf_url))
+            filtered.append((stype, year, pdf_url))
         elif year == target_year - 1 and stype == "annual":
-            filtered_reports.append((stype, year, pdf_url))
-    print(f"[DEBUG] Will download for {symbol}: {[f'{stype}_{year}' for stype, year, _ in filtered_reports]}")
+            filtered.append((stype, year, pdf_url))
+    return filtered
+
+
+async def get_all_financial_reports(page: Page, symbol: str):
+    """Find all available financial report PDFs (Annual, Q1-Q4) and their years, filtered for target_year and Q4 of previous year."""
+    if not await navigate_to_company_profile(page, symbol):
+        return []
+    print("On company profile page, waiting for content...")
+    await page.wait_for_timeout(3000)
+    if not await _click_financial_statements_tab(page):
+        return []
+    if not await _wait_for_financial_table(page):
+        return []
+
+    years = await _parse_years_from_table_header(page)
+    if not years:
+        print("No years found in table header.")
+        return []
+
+    rows = await page.query_selector_all("table tbody tr")
+    print(f"Found {len(rows)} rows in financial statements table")
+    await _debug_print_table_rows(rows)
+
+    found_reports = await _collect_pdf_links_for_statement_types(page, symbol, rows, years)
+    filtered_reports = _filter_reports_for_target_year(found_reports)
+    print(f"[DEBUG] Will download for {symbol}: {[f'{s}_{y}' for s, y, _ in filtered_reports]}")
     return filtered_reports
 
 async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year: int, statement_type: str) -> bool:
@@ -325,8 +366,7 @@ async def download_pdf_with_stealth(page: Page, pdf_url: str, symbol: str, year:
                 }
             """)
             if pdf_content:
-                with open(pdf_path, 'wb') as f:
-                    f.write(bytes(pdf_content))
+                await _async_write_bytes(pdf_path, bytes(pdf_content))
                 print(f"✅ Downloaded {filename} ({len(pdf_content)} bytes)")
                 return True
             else:
@@ -393,7 +433,7 @@ async def download_all_financial_statements():
     print(f"📋 Found {len(companies)} companies to process")
     
     # Setup browser with stealth configuration
-    playwright, browser, context = await setup_stealth_browser()
+    playwright, browser, _ = await setup_stealth_browser()
     
     try:
         # progress reporting
@@ -423,17 +463,17 @@ async def download_all_financial_statements():
                 failed_count += 1
                 print(f"❌ Failed to process {symbol}")
             processed += 1
-            # write progress
             try:
-                progress_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(progress_path, 'w', encoding='utf-8') as f:
-                    json.dump({
+                await _async_write_json_file(
+                    progress_path,
+                    {
                         "status": "running",
                         "processed": processed,
                         "success": success_count,
                         "failed": failed_count,
-                        "current_symbol": symbol
-                    }, f, ensure_ascii=False)
+                        "current_symbol": symbol,
+                    },
+                )
             except Exception:
                 pass
             
@@ -456,15 +496,16 @@ async def download_all_financial_statements():
         total = success_count + failed_count
         rate = (success_count/total*100) if total > 0 else 0.0
         print(f"📈 Success Rate: {rate:.1f}%")
-        # mark done
         try:
-            with open(progress_path, 'w', encoding='utf-8') as f:
-                json.dump({
+            await _async_write_json_file(
+                progress_path,
+                {
                     "status": "completed",
                     "processed": processed,
                     "success": success_count,
-                    "failed": failed_count
-                }, f, ensure_ascii=False)
+                    "failed": failed_count,
+                },
+            )
         except Exception:
             pass
     finally:

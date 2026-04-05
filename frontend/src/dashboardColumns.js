@@ -2,6 +2,7 @@
  * DataGrid column definitions — kept outside App() for lower Sonar cognitive complexity / nesting.
  */
 import React from "react";
+import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Tooltip from "@mui/material/Tooltip";
@@ -65,6 +66,15 @@ function SignedSarTypography({ value }) {
   );
 }
 
+SignedSarTypography.displayName = "SignedSarTypography";
+SignedSarTypography.propTypes = {
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+};
+
+SignedSarTypography.defaultProps = {
+  value: undefined,
+};
+
 function RetainedValueWithEvidence({ symbol, value, quarterFilter, fetchEvidenceData, evidenceKind }) {
   if (isEmptyCellValue(value)) {
     return GRID_EMPTY_AR;
@@ -106,6 +116,60 @@ function RetainedValueWithEvidence({ symbol, value, quarterFilter, fetchEvidence
   );
 }
 
+RetainedValueWithEvidence.displayName = "RetainedValueWithEvidence";
+RetainedValueWithEvidence.propTypes = {
+  symbol: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  quarterFilter: PropTypes.string.isRequired,
+  fetchEvidenceData: PropTypes.func.isRequired,
+  evidenceKind: PropTypes.oneOf(["previous", "current"]).isRequired,
+};
+
+/** DataGrid renderCell wrapper so Sonar/ESLint see explicit props validation. */
+function DashboardPreviousRetainedCell({ row, value, quarterFilter, fetchEvidenceData }) {
+  return (
+    <RetainedValueWithEvidence
+      symbol={row.symbol}
+      value={value}
+      quarterFilter={quarterFilter}
+      fetchEvidenceData={fetchEvidenceData}
+      evidenceKind="previous"
+    />
+  );
+}
+
+DashboardPreviousRetainedCell.displayName = "DashboardPreviousRetainedCell";
+DashboardPreviousRetainedCell.propTypes = {
+  row: PropTypes.shape({
+    symbol: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  }).isRequired,
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  quarterFilter: PropTypes.string.isRequired,
+  fetchEvidenceData: PropTypes.func.isRequired,
+};
+
+function DashboardCurrentRetainedCell({ row, value, quarterFilter, fetchEvidenceData }) {
+  return (
+    <RetainedValueWithEvidence
+      symbol={row.symbol}
+      value={value}
+      quarterFilter={quarterFilter}
+      fetchEvidenceData={fetchEvidenceData}
+      evidenceKind="current"
+    />
+  );
+}
+
+DashboardCurrentRetainedCell.displayName = "DashboardCurrentRetainedCell";
+DashboardCurrentRetainedCell.propTypes = {
+  row: PropTypes.shape({
+    symbol: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  }).isRequired,
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  quarterFilter: PropTypes.string.isRequired,
+  fetchEvidenceData: PropTypes.func.isRequired,
+};
+
 function NetProfitGridCell({ row, quarterFilter, netProfitData }) {
   const companySymbol = row?.company_symbol;
   const companyNetProfit = companySymbol ? netProfitData[companySymbol] : undefined;
@@ -126,12 +190,24 @@ function NetProfitGridCell({ row, quarterFilter, netProfitData }) {
   return GRID_EMPTY_AR;
 }
 
+NetProfitGridCell.displayName = "NetProfitGridCell";
+NetProfitGridCell.propTypes = {
+  row: PropTypes.object.isRequired,
+  quarterFilter: PropTypes.string.isRequired,
+  netProfitData: PropTypes.object.isRequired,
+};
+
 function FlowGridCell({ value }) {
   if (isEmptyCellValue(value)) {
     return GRID_EMPTY_AR;
   }
   return <SignedSarTypography value={value} />;
 }
+
+FlowGridCell.displayName = "FlowGridCell";
+FlowGridCell.propTypes = {
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+};
 
 /**
  * @param {object} opts
@@ -165,12 +241,11 @@ export function buildDashboardColumns({ quarterFilter, netProfitData, fetchEvide
       align: "right",
       headerAlign: "right",
       renderCell: (params) => (
-        <RetainedValueWithEvidence
-          symbol={params.row.symbol}
+        <DashboardPreviousRetainedCell
+          row={params.row}
           value={params.value}
           quarterFilter={quarterFilter}
           fetchEvidenceData={fetchEvidenceData}
-          evidenceKind="previous"
         />
       ),
     },
@@ -181,12 +256,11 @@ export function buildDashboardColumns({ quarterFilter, netProfitData, fetchEvide
       align: "right",
       headerAlign: "right",
       renderCell: (params) => (
-        <RetainedValueWithEvidence
-          symbol={params.row.symbol}
+        <DashboardCurrentRetainedCell
+          row={params.row}
           value={params.value}
           quarterFilter={quarterFilter}
           fetchEvidenceData={fetchEvidenceData}
-          evidenceKind="current"
         />
       ),
     },
@@ -234,3 +308,9 @@ export function buildDashboardColumns({ quarterFilter, netProfitData, fetchEvide
     },
   ];
 }
+
+buildDashboardColumns.propTypes = {
+  quarterFilter: PropTypes.string.isRequired,
+  netProfitData: PropTypes.object.isRequired,
+  fetchEvidenceData: PropTypes.func.isRequired,
+};

@@ -30,6 +30,45 @@ logger = logging.getLogger(__name__)
 FOREIGN_OWNERSHIP_JSON = "foreign_ownership_data.json"
 
 
+async def _async_read_json(path: Path):
+    def _read():
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    return await asyncio.to_thread(_read)
+
+
+async def _async_write_json(path: Path, obj) -> None:
+    def _write() -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False, indent=2)
+
+    await asyncio.to_thread(_write)
+
+
+def _reports_not_yet_downloaded(reports, existing_quarters: Set[str]) -> List[Tuple]:
+    new_reports = []
+    for stype, year, pdf_url in reports:
+        quarter_key = f"{stype}_{year}"
+        if quarter_key not in existing_quarters:
+            new_reports.append((stype, year, pdf_url))
+    return new_reports
+
+
+async def _download_new_pdf_reports(browser: Browser, symbol: str, new_reports) -> List[str]:
+    page = await browser.new_page()
+    downloaded = []
+    try:
+        for stype, year, pdf_url in new_reports:
+            success = await download_pdf_with_stealth(page, pdf_url, symbol, year, stype)
+            if success:
+                downloaded.append(f"{stype}_{year}")
+    finally:
+        await page.close()
+    return downloaded
+
+
 class QuarterlyUpdateOrchestrator:
     """Orchestrates quarterly updates for all three data sources."""
     
@@ -158,11 +197,8 @@ class QuarterlyUpdateOrchestrator:
                 new_data = await scraper.get_foreign_ownership_table()
                 
                 if new_data:
-                    # Save to frontend directory
                     output_file = self.frontend_dir / FOREIGN_OWNERSHIP_JSON
-                    with open(output_file, 'w', encoding='utf-8') as f:
-                        json.dump(new_data, f, ensure_ascii=False, indent=2)
-                    
+                    await _async_write_json(output_file, new_data)
                     logger.info(f"✅ Updated foreign ownership data: {len(new_data)} companies")
                     return True
                 else:
@@ -178,7 +214,7 @@ class QuarterlyUpdateOrchestrator:
         logger.info("🔄 Updating financial PDFs...")
         
         # Setup browser
-        playwright, browser, context = await setup_stealth_browser()
+        playwright, browser, _ = await setup_stealth_browser()
         
         results = {}
         
@@ -199,29 +235,15 @@ class QuarterlyUpdateOrchestrator:
                     logger.warning(f"⚠️  No reports found for {symbol}")
                     results[symbol] = []
                     continue
-                
-                # Filter for new quarters only
-                new_reports = []
-                for stype, year, pdf_url in reports:
-                    quarter_key = f"{stype}_{year}"
-                    if quarter_key not in existing_quarters:
-                        new_reports.append((stype, year, pdf_url))
-                
+
+                new_reports = _reports_not_yet_downloaded(reports, existing_quarters)
                 if not new_reports:
                     logger.info(f"✅ {symbol}: All PDFs already up-to-date")
                     results[symbol] = []
                     continue
-                
+
                 logger.info(f"📥 {symbol}: Downloading {len(new_reports)} new reports")
-                
-                # Download new PDFs
-                downloaded = []
-                for stype, year, pdf_url in new_reports:
-                    success = await download_pdf_with_stealth(page, pdf_url, symbol, year, stype)
-                    if success:
-                        downloaded.append(f"{stype}_{year}")
-                
-                results[symbol] = downloaded
+                results[symbol] = await _download_new_pdf_reports(browser, symbol, new_reports)
                 
                 # Add delay between companies
                 if i < len(symbols):
@@ -239,7 +261,7 @@ class QuarterlyUpdateOrchestrator:
         logger.info("🔄 Updating net profit data...")
         
         # Setup browser
-        playwright, browser, context = await setup_net_profit_browser()
+        playwright, browser, _ = await setup_net_profit_browser()
         
         results = {}
         
@@ -295,8 +317,7 @@ class QuarterlyUpdateOrchestrator:
         existing_data = []
         if net_profit_file.exists():
             try:
-                with open(net_profit_file, 'r', encoding='utf-8') as f:
-                    existing_data = json.load(f)
+                existing_data = await _async_read_json(net_profit_file)
             except Exception as e:
                 logger.warning(f"Error reading existing net profit data: {e}")
         
@@ -321,13 +342,10 @@ class QuarterlyUpdateOrchestrator:
             new_data["last_updated"] = datetime.now().isoformat()
             existing_data.append(new_data)
         
-        # Save updated data
-        with open(net_profit_file, 'w', encoding='utf-8') as f:
-            json.dump(existing_data, f, indent=2, ensure_ascii=False)
-        
+        await _async_write_json(net_profit_file, existing_data)
         logger.info(f"💾 Updated net profit data for {symbol}")
     
-    async def run_quarterly_update(self, force_full_update: bool = False) -> Dict:
+    async def run_quarterly_update(self) -> Dict:
         """Run the complete quarterly update process."""
         logger.info("🚀 Starting Quarterly Update Process")
         logger.info(f"📅 Current: {self.current_year} {self.current_quarter}")
@@ -340,10 +358,8 @@ class QuarterlyUpdateOrchestrator:
         # Step 2: Get company symbols
         if ownership_success:
             ownership_file = self.frontend_dir / FOREIGN_OWNERSHIP_JSON
-            with open(ownership_file, 'r', encoding='utf-8') as f:
-                ownership_data = json.load(f)
-            
-            symbols = [item['symbol'] for item in ownership_data if item.get('symbol')]
+            ownership_data = await _async_read_json(ownership_file)
+            symbols = [item["symbol"] for item in ownership_data if item.get("symbol")]
             logger.info(f"📋 Processing {len(symbols)} companies")
         else:
             logger.error("❌ Cannot proceed without ownership data")
@@ -370,10 +386,8 @@ class QuarterlyUpdateOrchestrator:
             "total_new_quarters": sum(len(quarters) for quarters in net_profit_results.values())
         }
         
-        # Save update summary
         summary_file = self.results_dir / "quarterly_update_summary.json"
-        with open(summary_file, 'w', encoding='utf-8') as f:
-            json.dump(summary, f, indent=2, ensure_ascii=False)
+        await _async_write_json(summary_file, summary)
         
         logger.info("🎉 Quarterly Update Complete!")
         logger.info(f"⏱️  Duration: {duration}")

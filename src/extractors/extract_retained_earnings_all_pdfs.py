@@ -143,6 +143,27 @@ class EvidenceScreenshotGenerator:
 RETAINED_EARNINGS_LABEL = "retained earnings"
 
 
+def _extraction_success_dict(
+    method: str,
+    raw_value: str,
+    numeric_value: float,
+    units: Dict,
+    year: int,
+    page: int,
+) -> Dict:
+    scaled = numeric_value * units["applied_multiplier"]
+    return {
+        "success": True,
+        "value": raw_value,
+        "numeric_value": scaled,
+        "method": method,
+        "year": year,
+        "page": page,
+        "unit_detected": units["unit_detected"],
+        "applied_multiplier": units["applied_multiplier"],
+    }
+
+
 class RetainedEarningsExtractor:
     def __init__(self):
         self.target_years = []
@@ -153,12 +174,12 @@ class RetainedEarningsExtractor:
         current_year = datetime.now().year
         
         # Look for 4-digit years (2020-2030 range)
-        year_pattern = r'\b(20[2-3][0-9])\b'
+        year_pattern = r'\b(20[2-3]\d)\b'
         years_found = re.findall(year_pattern, text)
         
         # Convert to integers and filter realistic years
         realistic_years = []
-        for year in set(int(y) for y in years_found):
+        for year in {int(y) for y in years_found}:
             if current_year - 10 <= year <= current_year + 1:
                 realistic_years.append(year)
         
@@ -239,143 +260,143 @@ class RetainedEarningsExtractor:
         except Exception as e:
             logger.warning(f"Failed to detect units for PDF: {e}")
             return { 'unit_detected': 'unknown', 'applied_multiplier': 1 }
-    
+
+    def _spire_scan_retained_row(self, table, pdf_path: str, page_index: int) -> Optional[Dict]:
+        for row_index in range(table.GetRowCount()):
+            first_col = table.GetText(row_index, 0).strip().lower()
+            if first_col != RETAINED_EARNINGS_LABEL:
+                continue
+            for year in self.target_years:
+                for col_index in range(table.GetColumnCount()):
+                    cell_data = table.GetText(row_index, col_index).strip()
+                    if str(year) not in cell_data:
+                        continue
+                    for row_idx in range(table.GetRowCount()):
+                        value_cell = table.GetText(row_idx, col_index).strip()
+                        if not value_cell or not value_cell.replace(",", "").isdigit():
+                            continue
+                        numeric_value = float(value_cell.replace(",", ""))
+                        if numeric_value < 10000:
+                            continue
+                        units = self._detect_units_for_pdf(
+                            pdf_path, page_num=page_index + 1, search_value=value_cell
+                        )
+                        return _extraction_success_dict(
+                            "spire_pdf", value_cell, numeric_value, units, year, page_index + 1
+                        )
+        return None
+
     def extract_with_spire_pdf(self, pdf_path: str) -> Optional[Dict]:
         """Extract using Spire.PDF if available"""
         try:
             from spire.pdf import PdfDocument, PdfTableExtractor
         except ImportError:
             return None
-        
+
         try:
             doc = PdfDocument()
             doc.LoadFromFile(pdf_path)
             extractor = PdfTableExtractor(doc)
-            
             for page_index in range(doc.Pages.Count):
                 tables = extractor.ExtractTable(page_index)
-                if tables:
-                    for table in tables:
-                        # Look for retained earnings row
-                        for row_index in range(table.GetRowCount()):
-                            first_col = table.GetText(row_index, 0).strip().lower()
-                            if first_col == RETAINED_EARNINGS_LABEL:
-                                # Found retained earnings row, extract values
-                                for year in self.target_years:
-                                    for col_index in range(table.GetColumnCount()):
-                                        cell_data = table.GetText(row_index, col_index).strip()
-                                        if str(year) in cell_data:
-                                            # Look for numeric value in this column
-                                            for row_idx in range(table.GetRowCount()):
-                                                value_cell = table.GetText(row_idx, col_index).strip()
-                                                if value_cell and value_cell.replace(',', '').isdigit():
-                                                    numeric_value = float(value_cell.replace(',', ''))
-                                                    if numeric_value >= 10000:
-                                                        # Detect units on the same page
-                                                        units = self._detect_units_for_pdf(pdf_path, page_num=page_index + 1, search_value=value_cell)
-                                                        scaled_value = numeric_value * units['applied_multiplier']
-                                                        doc.Close()
-                                                        return {
-                                                            'success': True,
-                                                            'value': value_cell,
-                                                            'numeric_value': scaled_value,
-                                                            'method': 'spire_pdf',
-                                                            'year': year,
-                                                            'page': page_index + 1,
-                                                            'unit_detected': units['unit_detected'],
-                                                            'applied_multiplier': units['applied_multiplier']
-                                                        }
+                if not tables:
+                    continue
+                for table in tables:
+                    found = self._spire_scan_retained_row(table, pdf_path, page_index)
+                    if found:
+                        doc.Close()
+                        return found
             doc.Close()
             return None
         except Exception as e:
             logger.error(f"Spire.PDF error: {e}")
             return None
     
+    def _camelot_scan_dataframe(self, pdf_path: str, df) -> Optional[Dict]:
+        for _, row in df.iterrows():
+            if RETAINED_EARNINGS_LABEL not in str(row.iloc[0]).lower():
+                continue
+            for year in self.target_years:
+                for col_idx, col_name in enumerate(df.columns):
+                    if str(year) not in str(col_name):
+                        continue
+                    for row_idx in range(len(df)):
+                        value = df.iloc[row_idx, col_idx]
+                        if not value or not str(value).replace(",", "").isdigit():
+                            continue
+                        numeric_value = float(str(value).replace(",", ""))
+                        if numeric_value < 10000:
+                            continue
+                        page_num = self._find_page_for_value(pdf_path, str(value))
+                        units = self._detect_units_for_pdf(
+                            pdf_path, page_num=page_num, search_value=str(value)
+                        )
+                        return _extraction_success_dict(
+                            "camelot",
+                            str(value),
+                            numeric_value,
+                            units,
+                            year,
+                            page_num if page_num else 1,
+                        )
+        return None
+
     def extract_with_camelot(self, pdf_path: str) -> Optional[Dict]:
         """Extract using Camelot if available"""
         try:
             import camelot
         except ImportError:
             return None
-        
+
         try:
             tables = camelot.read_pdf(pdf_path, flavor="stream")
             for table in tables:
-                df = table.df
-                # Look for retained earnings row
-                for i, row in df.iterrows():
-                    if RETAINED_EARNINGS_LABEL in str(row.iloc[0]).lower():
-                        # Found retained earnings row, look for years
-                        for year in self.target_years:
-                            for col_idx, col_name in enumerate(df.columns):
-                                if str(year) in str(col_name):
-                                    # Look for numeric value in this column
-                                    for row_idx in range(len(df)):
-                                        value = df.iloc[row_idx, col_idx]
-                                        if value and str(value).replace(',', '').isdigit():
-                                            numeric_value = float(str(value).replace(',', ''))
-                                            if numeric_value >= 10000:
-                                                # Try to find the page for the found value and detect units
-                                                page_num = self._find_page_for_value(pdf_path, str(value))
-                                                units = self._detect_units_for_pdf(pdf_path, page_num=page_num, search_value=str(value))
-                                                scaled_value = numeric_value * units['applied_multiplier']
-                                                return {
-                                                    'success': True,
-                                                    'value': str(value),
-                                                    'numeric_value': scaled_value,
-                                                    'method': 'camelot',
-                                                    'year': year,
-                                                    'page': page_num if page_num else 1,
-                                                    'unit_detected': units['unit_detected'],
-                                                    'applied_multiplier': units['applied_multiplier']
-                                                }
+                found = self._camelot_scan_dataframe(pdf_path, table.df)
+                if found:
+                    return found
             return None
         except Exception as e:
             logger.error(f"Camelot error: {e}")
             return None
     
+    def _regex_try_number(self, pdf_path: str, number: str) -> Optional[Dict]:
+        clean_value = number.replace(",", "")
+        if not clean_value.isdigit():
+            return None
+        numeric_value = float(clean_value)
+        if numeric_value < 10000 or numeric_value in self.target_years:
+            return None
+        page_num = self._find_page_for_value(pdf_path, number)
+        units = self._detect_units_for_pdf(pdf_path, page_num=page_num, search_value=number)
+        return _extraction_success_dict(
+            "regex",
+            number,
+            numeric_value,
+            units,
+            self.most_recent_year,
+            page_num if page_num else 1,
+        )
+
     def extract_with_regex(self, pdf_path: str) -> Optional[Dict]:
         """Simple regex extraction as fallback"""
         try:
             doc = fitz.open(pdf_path)
-            text = ""
-            for page in doc:
-                text += page.get_text()
+            text = "".join(page.get_text() for page in doc)
             doc.close()
-            
-            # Detect years first
+
             self.detect_years(text)
             if not self.target_years:
                 return None
-            
-            # Look for retained earnings line
-            lines = text.split('\n')
+
+            lines = text.split("\n")
             for i, line in enumerate(lines):
-                if RETAINED_EARNINGS_LABEL in line.lower():
-                    # Look for numbers in nearby lines
-                    for j in range(i+1, min(i+10, len(lines))):
-                        next_line = lines[j]
-                        numbers = re.findall(r'([\d,]+)', next_line)
-                        for number in numbers:
-                            clean_value = number.replace(',', '')
-                            if clean_value.isdigit():
-                                numeric_value = float(clean_value)
-                                # Filter out years and small numbers
-                                if numeric_value >= 10000 and numeric_value not in self.target_years:
-                                    # Try to locate actual page for the number and detect units
-                                    page_num = self._find_page_for_value(pdf_path, number)
-                                    units = self._detect_units_for_pdf(pdf_path, page_num=page_num, search_value=number)
-                                    scaled_value = numeric_value * units['applied_multiplier']
-                                    return {
-                                        'success': True,
-                                        'value': number,
-                                        'numeric_value': scaled_value,
-                                        'method': 'regex',
-                                        'year': self.most_recent_year,
-                                        'page': page_num if page_num else 1,
-                                        'unit_detected': units['unit_detected'],
-                                        'applied_multiplier': units['applied_multiplier']
-                                    }
+                if RETAINED_EARNINGS_LABEL not in line.lower():
+                    continue
+                for j in range(i + 1, min(i + 10, len(lines))):
+                    for number in re.findall(r"([\d,]+)", lines[j]):
+                        found = self._regex_try_number(pdf_path, number)
+                        if found:
+                            return found
             return None
         except Exception as e:
             logger.error(f"Regex error: {e}")
@@ -447,7 +468,7 @@ def save_to_database(results):
 
 def main():
     pdf_dir = Path("data/pdfs")
-    pdf_files = [f for f in pdf_dir.glob("*.pdf")]
+    pdf_files = list(pdf_dir.glob("*.pdf"))
     
     if not pdf_files:
         print("No PDF files found in data/pdfs/")
@@ -468,9 +489,8 @@ def main():
             if os.path.exists(stop_flag_file):
                 print("🛑 Stop requested. Ending extraction loop early and saving partial results...")
                 break
-        except Exception:
-            # If any error reading stop flag, proceed safely
-            pass
+        except Exception as e:
+            logger.warning("Stop flag check failed; continuing extraction: %s", type(e).__name__)
         print(f"\n[{i}/{len(pdf_files)}] Processing: {pdf_file.name}")
         
         company_symbol = get_company_symbol_from_filename(pdf_file.name)

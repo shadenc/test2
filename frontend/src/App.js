@@ -36,6 +36,7 @@ import LinearProgress from '@mui/material/LinearProgress';
 import Stack from "@mui/material/Stack";
 import { buildDashboardColumns, GRID_EMPTY_AR } from "./dashboardColumns";
 import { mergeCorrectionIntoRows, quarterLabelFromDateString } from "./gridUtils";
+import { UpdateJobsDialog } from "./UpdateJobsDialog";
 
 // API URL configuration - supports both localhost and production
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5003';
@@ -126,6 +127,195 @@ function filenameFromContentDispositionHeader(contentDisposition, fallback = "da
   const m = contentDisposition?.match(/filename="(.+)"/);
   return m ? m[1] : fallback;
 }
+
+function userExportRowLabel(file) {
+  const datePart = file.export_date.split(" ")[0];
+  const [year, month, day] = datePart.split("-");
+  return `dashboard-${day}-${month}-${year}`;
+}
+
+function UserExportsDrawerList({ loading, error, files, onDeleteExport, apiUrl }) {
+  if (loading) {
+    return (
+      <ListItem sx={{ justifyContent: "center" }}>
+        <CircularProgress size={22} sx={{ color: "#1e6641" }} />
+      </ListItem>
+    );
+  }
+  if (error) {
+    return (
+      <ListItem>
+        <Alert severity="error">{error}</Alert>
+      </ListItem>
+    );
+  }
+  if (files.length === 0) {
+    return (
+      <ListItem sx={{ justifyContent: "center", alignItems: "center", minHeight: 80, width: "100%" }}>
+        <Typography sx={{ color: "#b0b7be", fontSize: 17, textAlign: "center", width: "100%" }}>
+          لا توجد ملفات محفوظة بعد
+        </Typography>
+      </ListItem>
+    );
+  }
+  return files.map((file) => (
+    <ListItem
+      key={file.filename || file.download_url || file.export_date}
+      tabIndex={0}
+      sx={{
+        pl: 3,
+        pr: 3,
+        py: 2.2,
+        mb: 1.5,
+        bgcolor: "#fff",
+        borderRadius: 2.5,
+        boxShadow: "0 1px 6px 0 rgba(30,102,65,0.06)",
+        display: "flex",
+        alignItems: "center",
+        "&:hover .export-delete-btn": { opacity: 1 },
+        minHeight: 56,
+        border: "none",
+        transition: "box-shadow 0.2s, transform 0.2s",
+        "&:hover": {
+          boxShadow: "0 4px 16px 0 rgba(30,102,65,0.10)",
+          transform: "translateY(-2px) scale(1.01)",
+        },
+        outline: "none",
+        "&:focus": {
+          boxShadow: "0 0 0 2px #1e664144",
+        },
+      }}
+    >
+      <Box sx={{ flexGrow: 1 }}>
+        <Typography sx={{ fontWeight: 500, color: "#1e6641", fontSize: 15 }}>
+          {userExportRowLabel(file)}
+        </Typography>
+      </Box>
+      <Tooltip title="تحميل" arrow>
+        <IconButton
+          aria-label="تحميل"
+          href={`${apiUrl}${file.download_url}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          sx={{
+            color: "#1e6641",
+            bgcolor: "transparent",
+            borderRadius: "50%",
+            p: 0.7,
+            mx: 0.5,
+            transition: "color 0.2s, background 0.2s",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 22,
+            height: 36,
+            width: 36,
+            minWidth: 36,
+          }}
+        >
+          <DownloadIcon sx={{ fontSize: 22 }} />
+        </IconButton>
+      </Tooltip>
+      <Tooltip title="حذف" arrow>
+        <IconButton
+          aria-label="حذف"
+          className="export-delete-btn"
+          onClick={() => onDeleteExport(file)}
+          sx={{
+            ml: 0.5,
+            opacity: 0,
+            color: "#7b7b7b",
+            bgcolor: "transparent",
+            borderRadius: "50%",
+            p: 0.7,
+            transition: "opacity 0.2s, color 0.2s, background 0.2s",
+            boxShadow: "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 22,
+            height: 36,
+            width: 36,
+            minWidth: 36,
+            "&:hover": { color: "#444", bgcolor: "rgba(120,120,120,0.07)" },
+          }}
+          size="small"
+        >
+          <DeleteOutlineIcon sx={{ fontSize: 22 }} />
+        </IconButton>
+      </Tooltip>
+    </ListItem>
+  ));
+}
+
+function QuarterlySnapshotsDrawerList({ loading, error, snapshots: snapList, apiUrl }) {
+  if (loading) {
+    return (
+      <ListItem sx={{ justifyContent: "center" }}>
+        <CircularProgress size={22} sx={{ color: "#1e6641" }} />
+      </ListItem>
+    );
+  }
+  if (error) {
+    return (
+      <ListItem>
+        <Alert severity="error">{error}</Alert>
+      </ListItem>
+    );
+  }
+  if (snapList.length === 0) {
+    return (
+      <ListItem sx={{ justifyContent: "center", color: "#888" }}>لا توجد ملفات محفوظة بعد</ListItem>
+    );
+  }
+  return snapList.map((snap) => (
+    <ListItem
+      key={snap.download_url}
+      sx={{ pl: 2, pr: 2, py: 1, borderBottom: "1px solid #e0e0e0", display: "flex", alignItems: "center" }}
+    >
+      <Typography sx={{ fontWeight: 500, color: "#1e6641", flexGrow: 1, fontSize: 16 }}>
+        {`${snap.year} ${snap.quarter} — ${snap.snapshot_date}`}
+      </Typography>
+      <Tooltip title={`تاريخ الاستخراج: ${snap.snapshot_date}`} arrow>
+        <Button
+          variant="contained"
+          color="success"
+          size="small"
+          href={`${apiUrl}${snap.download_url}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          sx={{ minWidth: 0, px: 2, py: 1, borderRadius: 2, fontWeight: 600 }}
+          startIcon={<DownloadIcon />}
+        >
+          تحميل
+        </Button>
+      </Tooltip>
+    </ListItem>
+  ));
+}
+
+UserExportsDrawerList.propTypes = {
+  loading: PropTypes.bool.isRequired,
+  error: PropTypes.string,
+  files: PropTypes.arrayOf(PropTypes.object).isRequired,
+  onDeleteExport: PropTypes.func.isRequired,
+  apiUrl: PropTypes.string.isRequired,
+};
+
+UserExportsDrawerList.defaultProps = {
+  error: null,
+};
+
+QuarterlySnapshotsDrawerList.propTypes = {
+  loading: PropTypes.bool.isRequired,
+  error: PropTypes.string,
+  snapshots: PropTypes.arrayOf(PropTypes.object).isRequired,
+  apiUrl: PropTypes.string.isRequired,
+};
+
+QuarterlySnapshotsDrawerList.defaultProps = {
+  error: null,
+};
 
 function buildFlowMapFromQuarterlyRows(quarterlyFlowData) {
   const flowMap = {};
@@ -296,7 +486,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
             {evidenceData.numeric_value && (
               <Box sx={{ mt: 3 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#1e6641', display: 'flex', alignItems: 'center', gap: 1 }}>
-                      القيمة المستخرجة:
+                  القيمة المستخرجة:{' '}
                   {evidenceData.applied_multiplier && Number(evidenceData.applied_multiplier) > 1 && (
                     <span style={{ color: '#888', fontWeight: 400 }}>(تم تطبيق تحويل الوحدة)</span>
                   )}
@@ -309,7 +499,7 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                 <Box sx={{ mt: 1.5, p: 1.5, bgcolor: '#f7f9f8', border: '1px solid #e0e6e4', borderRadius: 1.5 }}>
                   {(() => {
                     const rawStr = String(evidenceData.value ?? "").replace(/[^0-9,.-]/g, "");
-                    const raw = Number(rawStr.replace(/,/g, ""));
+                    const raw = Number(rawStr.replaceAll(",", ""));
                     const mult = Number(evidenceData.applied_multiplier ?? 1);
                     const unit = String(evidenceData.unit_detected ?? "SAR");
                     const unitLabel = arabicUnitLabelForUnit(unit);
@@ -429,7 +619,9 @@ const EvidenceModal = ({ open, onClose, evidenceData, loading, error, onDataUpda
                               onDataUpdate();
                             }
                           }
-                        } catch (e) {}
+                        } catch (e) {
+                          console.warn("تعذر إرسال التصحيح إلى الخادم", e);
+                        }
                         setVerifyMode(null);
                         // Close the modal after save
                         if (typeof onClose === 'function') onClose();
@@ -696,7 +888,8 @@ const InlineEditableCell = ({ value, onSave, fieldType, companySymbol, companyNa
         alert('فشل في حفظ التصحيح: ' + (data.message || ''));
       }
     } catch (error) {
-      alert('حدث خطأ أثناء حفظ التصحيح: ' + error.message);
+      const message = error instanceof Error ? error.message : String(error);
+      alert('حدث خطأ أثناء حفظ التصحيح: ' + message);
     } finally {
       setSaving(false);
     }
@@ -832,6 +1025,22 @@ function App() {
   const [bothNetRunning, setBothNetRunning] = useState(false);
   const [bothIsStopping, setBothIsStopping] = useState(false);
 
+  const requestStopPdfPipeline = useCallback(async () => {
+    try {
+      await fetch(`${API_URL}/api/pdfs/stop`, { method: 'POST' });
+    } catch (e) {
+      console.warn('طلب إيقاف مهمة PDF فشل', e);
+    }
+  }, []);
+
+  const requestStopNetProfitPipeline = useCallback(async () => {
+    try {
+      await fetch(`${API_URL}/api/net_profit/stop`, { method: 'POST' });
+    } catch (e) {
+      console.warn('طلب إيقاف مهمة صافي الربح فشل', e);
+    }
+  }, []);
+
   const startPollPdf = (onComplete) => {
     if (pdfPollId) return;
     const id = setInterval(async () => {
@@ -854,7 +1063,9 @@ function App() {
             onComplete();
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn("تعذر جلب حالة مهمة PDF", e);
+      }
     }, 1500);
     setPdfPollId(id);
   };
@@ -881,7 +1092,9 @@ function App() {
             onComplete();
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn("تعذر جلب حالة مهمة صافي الربح", e);
+      }
     }, 1500);
     setNetPollId(id);
   };
@@ -911,7 +1124,8 @@ function App() {
       }
     } catch (error) {
       console.error("Error fetching evidence data:", error);
-      setEvidenceError(error?.message ?? "حدث خطأ أثناء التحميل");
+      const message = error instanceof Error ? error.message : String(error);
+      setEvidenceError(message || "حدث خطأ أثناء التحميل");
     } finally {
       setEvidenceLoading(false);
     }
@@ -965,7 +1179,8 @@ function App() {
         setLoading(false);
       }
     } catch (error) {
-      alert('تعذر الاتصال بالخادم: ' + error.message);
+      const message = error instanceof Error ? error.message : String(error);
+      alert('تعذر الاتصال بالخادم: ' + message);
       setLoading(false);
     }
   };
@@ -1002,13 +1217,15 @@ function App() {
           setUserExports(data);
           setUserExportsLoading(false);
         })
-        .catch(err => {
+        .catch((err) => {
+          console.warn("تعذر تحديث قائمة ملفات التصدير بعد التحميل", err);
           setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
           setUserExportsLoading(false);
         });
     } catch (error) {
       console.error('Error exporting to Excel:', error);
-      alert('فشل في تصدير ملف Excel: ' + error.message);
+      const message = error instanceof Error ? error.message : String(error);
+      alert('فشل في تصدير ملف Excel: ' + message);
     }
   };
 
@@ -1162,7 +1379,9 @@ function App() {
     try {
       await fetch(`${API_URL}/api/user_exports/${fileToDelete.filename}`, { method: 'DELETE' });
       setUserExports((prev) => prev.filter(f => f.filename !== fileToDelete.filename));
-    } catch (e) {}
+    } catch (e) {
+      console.warn("تعذر حذف ملف التصدير", e);
+    }
     setDeleteDialogOpen(false);
     setFileToDelete(null);
   };
@@ -1215,7 +1434,8 @@ function App() {
           setUserExports(data);
           setUserExportsLoading(false);
         })
-        .catch(err => {
+        .catch((err) => {
+          console.warn("تعذر تحديث قائمة التصدير بعد التصدير المخصص", err);
           setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
           setUserExportsLoading(false);
         });
@@ -1346,6 +1566,7 @@ function App() {
             <Button
               variant="text"
               onClick={handleReset}
+              startIcon={<RefreshIcon sx={{ fontSize: 18, color: '#6c757d' }} />}
               sx={{
                 minWidth: 150,
                 height: 48,
@@ -1358,9 +1579,6 @@ function App() {
                 fontWeight: 500,
                 fontSize: 14,
                 textTransform: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1.5,
                 boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
                 transition: 'all 0.2s ease-in-out',
                 '&:hover': {
@@ -1371,7 +1589,6 @@ function App() {
                 },
               }}
             >
-              <RefreshIcon sx={{ fontSize: 18, color: '#6c757d' }} />
               إعادة تعيين
             </Button>
             
@@ -1380,6 +1597,7 @@ function App() {
               <Button
                 variant="contained"
                 onClick={handleExcelExport}
+                startIcon={<FileDownloadIcon sx={{ fontSize: 18, color: 'white' }} />}
                 sx={{
                   minWidth: 150,
                   height: 48,
@@ -1391,9 +1609,6 @@ function App() {
                   fontWeight: 600,
                   fontSize: 14,
                   textTransform: 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1.5,
                   boxShadow: '0 4px 12px rgba(30, 102, 65, 0.3)',
                   transition: 'all 0.2s ease-in-out',
                   '&:hover': {
@@ -1403,7 +1618,6 @@ function App() {
                   },
                 }}
               >
-                <FileDownloadIcon sx={{ fontSize: 18, color: 'white' }} />
                 تصدير الجدول
               </Button>
             </Tooltip>
@@ -1439,114 +1653,33 @@ function App() {
                   {jobPipelineProgressCaption(pdfJobStatus)}
                 </Typography>
                 <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-                  <Button variant="outlined" onClick={async () => { try { await fetch(`${API_URL}/api/pdfs/stop`, { method: 'POST' }); } catch (e) {} }} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
+                  <Button variant="outlined" onClick={requestStopPdfPipeline} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
                 </Box>
               </Box>
             </Modal>
 
-            {/* Update Selection Modal */}
-            <Dialog open={updateModalOpen} onClose={() => setUpdateModalOpen(false)}>
-              <DialogTitle sx={{ fontWeight: 700, color: '#1e6641' }}>اختر نوع التحديث</DialogTitle>
-              <DialogContent sx={{ minWidth: 360 }}>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={selectPdf} onChange={(e) => setSelectPdf(e.target.checked)} />
-                    تحديث الأرباح المبقاة (تنزيل واستخراج)
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={selectNet} onChange={(e) => setSelectNet(e.target.checked)} />
-                    تحديث صافي الربح
-                  </label>
-                  <Typography variant="caption" sx={{ color: '#666' }}>يمكن اختيار واحد أو كلاهما.</Typography>
-                </Box>
-              </DialogContent>
-              <DialogActions>
-                <Button onClick={() => setUpdateModalOpen(false)} sx={{ color: '#666' }}>إلغاء</Button>
-                <Button
-                  variant="contained"
-                  disabled={!selectPdf && !selectNet}
-                  onClick={async () => {
-                    setUpdateModalOpen(false);
-                    if (selectPdf && !selectNet) {
-                      try {
-                        const res = await fetch(`${API_URL}/api/run_pdfs_pipeline`, { method: 'POST' });
-                        const data = await res.json();
-                        if (res.status === 202) {
-                          setIsPdfRunning(true);
-                          setPdfJobStatus({ status: 'running' });
-                          setPdfProgressOpen(true);
-                          startPollPdf();
-                        } else {
-                          alert('❌ لم يتم بدء العملية: ' + (data.message || ''));
-                        }
-                      } catch (e) {
-                        alert('❌ خطأ في الاتصال بالخادم: ' + e.message);
-                      }
-                    } else if (!selectPdf && selectNet) {
-                      try {
-                        const res = await fetch(`${API_URL}/api/run_net_profit_scrape`, { method: 'POST' });
-                        const data = await res.json();
-                        if (res.status === 202) {
-                          setIsNetRunning(true);
-                          setNetJobStatus({ status: 'running' });
-                          setNetProgressOpen(true);
-                          startPollNet();
-                        } else {
-                          alert('❌ لم يتم بدء العملية: ' + (data.message || ''));
-                        }
-                      } catch (e) {
-                        alert('❌ خطأ في الاتصال بالخادم: ' + e.message);
-                      }
-                    } else {
-                      // Run both in parallel
-                      try {
-                        // Start PDFs
-                        const resPdf = await fetch(`${API_URL}/api/run_pdfs_pipeline`, { method: 'POST' });
-                        const dataPdf = await resPdf.json();
-                        if (resPdf.status === 202) {
-                          // Combined modal controls instead of individual
-                          setPdfJobStatus({ status: 'running' });
-                          setBothProgressOpen(true);
-                          setBothPdfRunning(true);
-                          startPollPdf(() => {
-                            setBothPdfRunning(false);
-                            if (!bothNetRunning) {
-                              setBothProgressOpen(false);
-                            }
-                          });
-                        } else {
-                          alert('❌ لم يتم بدء عملية تحديث PDF: ' + (dataPdf.message || ''));
-                        }
-                        // Start Net Profit
-                        const resNet = await fetch(`${API_URL}/api/run_net_profit_scrape`, { method: 'POST' });
-                        const dataNet = await resNet.json();
-                        if (resNet.status === 202) {
-                          setNetJobStatus({ status: 'running' });
-                          setBothProgressOpen(true);
-                          setBothNetRunning(true);
-                          startPollNet(() => {
-                            setBothNetRunning(false);
-                            if (!bothPdfRunning) {
-                              setBothProgressOpen(false);
-                            }
-                          });
-                        } else {
-                          alert('❌ لم يتم بدء تحديث صافي الربح: ' + (dataNet.message || ''));
-                        }
-                      } catch (e) {
-                        alert('❌ خطأ في الاتصال بالخادم: ' + e.message);
-                      } finally {
-                        setSelectPdf(false);
-                        setSelectNet(false);
-                      }
-                    }
-                  }}
-                  sx={{ bgcolor: '#1e6641', '&:hover': { bgcolor: '#14532d' } }}
-                >
-                  بدء التحديث
-                </Button>
-              </DialogActions>
-            </Dialog>
+            <UpdateJobsDialog
+              open={updateModalOpen}
+              onClose={() => setUpdateModalOpen(false)}
+              apiUrl={API_URL}
+              selectPdf={selectPdf}
+              setSelectPdf={setSelectPdf}
+              selectNet={selectNet}
+              setSelectNet={setSelectNet}
+              startPollPdf={startPollPdf}
+              startPollNet={startPollNet}
+              setIsPdfRunning={setIsPdfRunning}
+              setPdfJobStatus={setPdfJobStatus}
+              setPdfProgressOpen={setPdfProgressOpen}
+              setIsNetRunning={setIsNetRunning}
+              setNetJobStatus={setNetJobStatus}
+              setNetProgressOpen={setNetProgressOpen}
+              setBothProgressOpen={setBothProgressOpen}
+              setBothPdfRunning={setBothPdfRunning}
+              setBothNetRunning={setBothNetRunning}
+              bothPdfRunning={bothPdfRunning}
+              bothNetRunning={bothNetRunning}
+            />
 
             {/* Combined Progress Modal for Both */}
             <Modal open={bothProgressOpen} onClose={() => {}}>
@@ -1570,8 +1703,8 @@ function App() {
                     variant="outlined"
                     onClick={async () => {
                       setBothIsStopping(true);
-                      try { await fetch(`${API_URL}/api/pdfs/stop`, { method: 'POST' }); } catch (e) {}
-                      try { await fetch(`${API_URL}/api/net_profit/stop`, { method: 'POST' }); } catch (e) {}
+                      await requestStopPdfPipeline();
+                      await requestStopNetProfitPipeline();
                     }}
                     disabled={bothIsStopping}
                     sx={stopBothJobsButtonSx(bothIsStopping)}
@@ -1590,7 +1723,7 @@ function App() {
                   {jobPipelineProgressCaption(netJobStatus)}
                 </Typography>
                 <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-                  <Button variant="outlined" onClick={async () => { try { await fetch(`${API_URL}/api/net_profit/stop`, { method: 'POST' }); } catch (e) {} }} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
+                  <Button variant="outlined" onClick={requestStopNetProfitPipeline} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
                 </Box>
               </Box>
             </Modal>
@@ -1829,109 +1962,13 @@ function App() {
           </Box>
         </Box>
         <List>
-          {userExportsLoading ? (
-            <ListItem sx={{ justifyContent: 'center' }}><CircularProgress size={22} sx={{ color: '#1e6641' }} /></ListItem>
-          ) : userExportsError ? (
-            <ListItem><Alert severity="error">{userExportsError}</Alert></ListItem>
-          ) : userExports.length === 0 ? (
-            <ListItem sx={{ justifyContent: 'center', alignItems: 'center', minHeight: 80, width: '100%' }}>
-              <Typography sx={{ color: '#b0b7be', fontSize: 17, textAlign: 'center', width: '100%' }}>
-                لا توجد ملفات محفوظة بعد
-              </Typography>
-            </ListItem>
-          ) : (
-            userExports.map((file, idx) => (
-              <ListItem
-                key={idx}
-                tabIndex={0}
-                sx={{
-                  pl: 3, pr: 3, py: 2.2,
-                  mb: 1.5,
-                  bgcolor: '#fff',
-                  borderRadius: 2.5,
-                  boxShadow: '0 1px 6px 0 rgba(30,102,65,0.06)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  '&:hover .export-delete-btn': { opacity: 1 },
-                  minHeight: 56,
-                  border: 'none',
-                  transition: 'box-shadow 0.2s, transform 0.2s',
-                  '&:hover': {
-                    boxShadow: '0 4px 16px 0 rgba(30,102,65,0.10)',
-                    transform: 'translateY(-2px) scale(1.01)',
-                  },
-                  outline: 'none',
-                  '&:focus': {
-                    boxShadow: '0 0 0 2px #1e664144',
-                  },
-                }}
-              >
-                <Box sx={{ flexGrow: 1 }}>
-                  <Typography sx={{ fontWeight: 500, color: '#1e6641', fontSize: 15 }}>
-                    {(() => {
-                      // file.export_date is 'YYYY-MM-DD HH:mm:ss'
-                      const datePart = file.export_date.split(' ')[0];
-                      const [year, month, day] = datePart.split('-');
-                      return `dashboard-${day}-${month}-${year}`;
-                    })()}
-                  </Typography>
-                </Box>
-                <Tooltip title="تحميل" arrow>
-                  <IconButton
-                    aria-label="تحميل"
-                    href={`${API_URL}${file.download_url}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{
-                      color: '#1e6641',
-                      bgcolor: 'transparent',
-                      borderRadius: '50%',
-                      p: 0.7,
-                      mx: 0.5,
-                      transition: 'color 0.2s, background 0.2s',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 22,
-                      height: 36,
-                      width: 36,
-                      minWidth: 36,
-                    }}
-                  >
-                    <DownloadIcon sx={{ fontSize: 22 }} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="حذف" arrow>
-                  <IconButton
-                    aria-label="حذف"
-                    className="export-delete-btn"
-                    onClick={() => handleDeleteExport(file)}
-                    sx={{
-                      ml: 0.5,
-                      opacity: 0,
-                      color: '#7b7b7b',
-                      bgcolor: 'transparent',
-                      borderRadius: '50%',
-                      p: 0.7,
-                      transition: 'opacity 0.2s, color 0.2s, background 0.2s',
-                      boxShadow: 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 22,
-                      height: 36,
-                      width: 36,
-                      minWidth: 36,
-                      '&:hover': { color: '#444', bgcolor: 'rgba(120,120,120,0.07)' },
-                    }}
-                    size="small"
-                  >
-                    <DeleteOutlineIcon sx={{ fontSize: 22 }} />
-                  </IconButton>
-                </Tooltip>
-              </ListItem>
-            ))
-          )}
+          <UserExportsDrawerList
+            loading={userExportsLoading}
+            error={userExportsError || undefined}
+            files={userExports}
+            onDeleteExport={handleDeleteExport}
+            apiUrl={API_URL}
+          />
         </List>
         {/* Divider between sections */}
         <Box sx={{ mt: 2, pb: 0, px: 0 }}>
@@ -2358,35 +2395,12 @@ function App() {
 
         {/* Quarterly Archives List */}
         <List>
-          {snapshotsLoading ? (
-            <ListItem sx={{ justifyContent: 'center' }}><CircularProgress size={22} sx={{ color: '#1e6641' }} /></ListItem>
-          ) : snapshotsError ? (
-            <ListItem><Alert severity="error">{snapshotsError}</Alert></ListItem>
-          ) : snapshots.length === 0 ? (
-            <ListItem sx={{ justifyContent: 'center', color: '#888' }}>لا توجد ملفات محفوظة بعد</ListItem>
-          ) : (
-            snapshots.map((snap, idx) => (
-              <ListItem key={idx} sx={{ pl: 2, pr: 2, py: 1, borderBottom: '1px solid #e0e0e0', display: 'flex', alignItems: 'center' }}>
-                <Typography sx={{ fontWeight: 500, color: '#1e6641', flexGrow: 1, fontSize: 16 }}>
-                  {`${snap.year} ${snap.quarter.replace('Q', 'Q')} — ${snap.snapshot_date}`}
-                </Typography>
-                <Tooltip title={`تاريخ الاستخراج: ${snap.snapshot_date}`} arrow>
-                  <Button
-                    variant="contained"
-                    color="success"
-                    size="small"
-                    href={`${API_URL}${snap.download_url}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{ minWidth: 0, px: 2, py: 1, borderRadius: 2, fontWeight: 600 }}
-                    startIcon={<DownloadIcon />}
-                  >
-                    تحميل
-                  </Button>
-                </Tooltip>
-              </ListItem>
-            ))
-          )}
+          <QuarterlySnapshotsDrawerList
+            loading={snapshotsLoading}
+            error={snapshotsError || undefined}
+            snapshots={snapshots}
+            apiUrl={API_URL}
+          />
         </List>
       </Drawer>
     </Box>
