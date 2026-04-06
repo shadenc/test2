@@ -38,6 +38,8 @@ import { buildDashboardColumns, GRID_EMPTY_AR } from "./dashboardColumns";
 import { mergeCorrectionIntoRows, quarterLabelFromDateString } from "./gridUtils";
 import { UpdateJobsDialog } from "./UpdateJobsDialog";
 import { createPipelineStatusPoller } from "./pipelineStatusPoll";
+import { PipelineProgressModal } from "./PipelineProgressModal";
+import { DrawerListLoadingOrError } from "./DrawerListLoadingOrError";
 
 // API URL configuration - supports both localhost and production
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5003';
@@ -136,19 +138,8 @@ function userExportRowLabel(file) {
 }
 
 function UserExportsDrawerList({ loading, error, files, onDeleteExport, apiUrl }) {
-  if (loading) {
-    return (
-      <ListItem sx={{ justifyContent: "center" }}>
-        <CircularProgress size={22} sx={{ color: "#1e6641" }} />
-      </ListItem>
-    );
-  }
-  if (error) {
-    return (
-      <ListItem>
-        <Alert severity="error">{error}</Alert>
-      </ListItem>
-    );
+  if (loading || error) {
+    return <DrawerListLoadingOrError loading={loading} error={error} />;
   }
   if (files.length === 0) {
     return (
@@ -250,19 +241,8 @@ function UserExportsDrawerList({ loading, error, files, onDeleteExport, apiUrl }
 }
 
 function QuarterlySnapshotsDrawerList({ loading, error, snapshots: snapList, apiUrl }) {
-  if (loading) {
-    return (
-      <ListItem sx={{ justifyContent: "center" }}>
-        <CircularProgress size={22} sx={{ color: "#1e6641" }} />
-      </ListItem>
-    );
-  }
-  if (error) {
-    return (
-      <ListItem>
-        <Alert severity="error">{error}</Alert>
-      </ListItem>
-    );
+  if (loading || error) {
+    return <DrawerListLoadingOrError loading={loading} error={error} />;
   }
   if (snapList.length === 0) {
     return (
@@ -1611,19 +1591,20 @@ function App() {
               </Button>
             </Tooltip>
 
-            {/* PDFs Progress Modal */}
-            <Modal open={pdfProgressOpen} onClose={() => {}}>
-              <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 420, bgcolor: 'background.paper', borderRadius: 2, boxShadow: 24, p: 3, direction: 'rtl' }}>
-                <Typography variant="h6" sx={{ fontWeight: 'bold', color: '#1e6641', mb: 1 }}>تحديث PDF قيد التنفيذ</Typography>
-                <LinearProgress color="success" />
-                <Typography sx={{ fontSize: 13, color: '#1e6641', mt: 1 }}>
-                  {jobPipelineProgressCaption(pdfJobStatus)}
-                </Typography>
-                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-                  <Button variant="outlined" onClick={requestStopPdfPipeline} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
-                </Box>
-              </Box>
-            </Modal>
+            <PipelineProgressModal
+              open={pdfProgressOpen}
+              width={420}
+              title="تحديث PDF قيد التنفيذ"
+              titleColor="#1e6641"
+              linearColor="success"
+              footer={
+                <Button variant="outlined" onClick={requestStopPdfPipeline} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
+              }
+            >
+              <Typography sx={{ fontSize: 13, color: '#1e6641', mt: 1 }}>
+                {jobPipelineProgressCaption(pdfJobStatus)}
+              </Typography>
+            </PipelineProgressModal>
 
             <UpdateJobsDialog
               open={updateModalOpen}
@@ -1646,52 +1627,54 @@ function App() {
               bothNetRunning={bothNetRunning}
             />
 
-            {/* Combined Progress Modal for Both */}
-            <Modal open={bothProgressOpen} onClose={() => {}}>
-              <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 520, bgcolor: 'background.paper', borderRadius: 2, boxShadow: 24, p: 3, direction: 'rtl' }}>
-                <Typography variant="h6" sx={{ fontWeight: 'bold', color: '#1e6641', mb: 2 }}>التحديث قيد التنفيذ</Typography>
-                <LinearProgress color="success" />
-                {/* Finalizing hint */}
-                {((pdfJobStatus?.status === 'finalizing') || (netJobStatus?.status === 'finalizing')) && (
-                  <Typography sx={{ mt: 1, fontSize: 13, color: '#555' }}>
-                    جارٍ الإنهاء: إيقاف العمليات، حساب النتائج، وتحديث اللوحة. يرجى الانتظار حتى يكتمل التحديث.
-                  </Typography>
-                )}
-                <Typography sx={{ fontSize: 13, color: '#1e6641', mt: 1 }}>
-                  {combinedPipelineLine("الأرباح المبقاة", pdfJobStatus)}
+            <PipelineProgressModal
+              open={bothProgressOpen}
+              width={520}
+              title="التحديث قيد التنفيذ"
+              titleColor="#1e6641"
+              linearColor="success"
+              titleMarginBottom={2}
+              footer={
+                <Button
+                  variant="outlined"
+                  onClick={async () => {
+                    setBothIsStopping(true);
+                    await requestStopPdfPipeline();
+                    await requestStopNetProfitPipeline();
+                  }}
+                  disabled={bothIsStopping}
+                  sx={stopBothJobsButtonSx(bothIsStopping)}
+                >
+                  {bothIsStopping ? 'جاري الإنهاء...' : 'إيقاف'}
+                </Button>
+              }
+            >
+              {((pdfJobStatus?.status === 'finalizing') || (netJobStatus?.status === 'finalizing')) && (
+                <Typography sx={{ mt: 1, fontSize: 13, color: '#555' }}>
+                  جارٍ الإنهاء: إيقاف العمليات، حساب النتائج، وتحديث اللوحة. يرجى الانتظار حتى يكتمل التحديث.
                 </Typography>
-                <Typography sx={{ fontSize: 13, color: '#ff9800' }}>
-                  {combinedPipelineLine("صافي الربح", netJobStatus)}
-                </Typography>
-                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-                  <Button
-                    variant="outlined"
-                    onClick={async () => {
-                      setBothIsStopping(true);
-                      await requestStopPdfPipeline();
-                      await requestStopNetProfitPipeline();
-                    }}
-                    disabled={bothIsStopping}
-                    sx={stopBothJobsButtonSx(bothIsStopping)}
-                  >
-                    {bothIsStopping ? 'جاري الإنهاء...' : 'إيقاف'}
-                  </Button>
-                </Box>
-              </Box>
-            </Modal>
-            {/* Net Profit Progress Modal */}
-            <Modal open={netProgressOpen} onClose={() => {}}>
-              <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 420, bgcolor: 'background.paper', borderRadius: 2, boxShadow: 24, p: 3, direction: 'rtl' }}>
-                <Typography variant="h6" sx={{ fontWeight: 'bold', color: '#ff9800', mb: 1 }}>تحديث صافي الربح قيد التنفيذ</Typography>
-                <LinearProgress color="warning" />
-                <Typography sx={{ fontSize: 13, color: '#ff9800', mt: 1 }}>
-                  {jobPipelineProgressCaption(netJobStatus)}
-                </Typography>
-                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-                  <Button variant="outlined" onClick={requestStopNetProfitPipeline} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
-                </Box>
-              </Box>
-            </Modal>
+              )}
+              <Typography sx={{ fontSize: 13, color: '#1e6641', mt: 1 }}>
+                {combinedPipelineLine("الأرباح المبقاة", pdfJobStatus)}
+              </Typography>
+              <Typography sx={{ fontSize: 13, color: '#ff9800' }}>
+                {combinedPipelineLine("صافي الربح", netJobStatus)}
+              </Typography>
+            </PipelineProgressModal>
+            <PipelineProgressModal
+              open={netProgressOpen}
+              width={420}
+              title="تحديث صافي الربح قيد التنفيذ"
+              titleColor="#ff9800"
+              linearColor="warning"
+              footer={
+                <Button variant="outlined" onClick={requestStopNetProfitPipeline} sx={{ color: '#b71c1c', borderColor: '#b71c1c' }}>إيقاف</Button>
+              }
+            >
+              <Typography sx={{ fontSize: 13, color: '#ff9800', mt: 1 }}>
+                {jobPipelineProgressCaption(netJobStatus)}
+              </Typography>
+            </PipelineProgressModal>
           </Box>
         </Box>
         <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2, flexWrap: "wrap" }}>
