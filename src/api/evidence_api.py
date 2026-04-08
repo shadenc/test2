@@ -393,7 +393,7 @@ def create_app():
     # --- Quarterly Scheduler Setup (jobs call module-level functions to limit create_app complexity) ---
     if os.environ.get('WERKZEUG_RUN_MAIN', 'true') == 'true':
         scheduler = BackgroundScheduler()
-
+        
         scheduler.add_job(
             run_quarterly_refresh_and_archive,
             'cron',
@@ -405,7 +405,7 @@ def create_app():
             id='quarterly_refresh_and_archive',
             replace_existing=True,
         )
-
+        
         scheduler.add_job(
             run_quarterly_refresh_and_archive,
             'cron',
