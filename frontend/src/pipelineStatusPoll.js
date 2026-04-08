@@ -1,5 +1,64 @@
 const TERMINAL_JOB_STATUSES = new Set(["completed", "idle"]);
 
+function scheduleReloadFns(reloadFns, reloadDelayMs) {
+  setTimeout(() => {
+    reloadFns.forEach((fn) => fn());
+  }, reloadDelayMs);
+}
+
+function finishTerminalPoll(
+  intervalId,
+  setPollId,
+  setProgressOpen,
+  reloadFns,
+  reloadDelayMs,
+  onComplete,
+) {
+  clearInterval(intervalId);
+  setPollId(null);
+  setProgressOpen(false);
+  scheduleReloadFns(reloadFns, reloadDelayMs);
+  if (typeof onComplete === "function") {
+    onComplete();
+  }
+}
+
+/**
+ * One poll iteration (top-level to satisfy Sonar S2004 nesting limit).
+ */
+async function runPipelinePollOnce(ctx) {
+  const {
+    apiUrl,
+    statusPath,
+    setJobStatus,
+    warnMessage,
+    intervalId,
+    setPollId,
+    setProgressOpen,
+    reloadFns,
+    reloadDelayMs,
+    onComplete,
+  } = ctx;
+  try {
+    const res = await fetch(`${apiUrl}${statusPath}`);
+    const data = await res.json();
+    setJobStatus(data);
+    if (!TERMINAL_JOB_STATUSES.has(data.status)) {
+      return;
+    }
+    finishTerminalPoll(
+      intervalId,
+      setPollId,
+      setProgressOpen,
+      reloadFns,
+      reloadDelayMs,
+      onComplete,
+    );
+  } catch (e) {
+    console.warn(warnMessage, e);
+  }
+}
+
 /**
  * Factory for PDF / net-profit pipeline status polling (deduplicates App.js interval logic).
  * @param {object} opts
@@ -28,25 +87,19 @@ export function createPipelineStatusPoller(opts) {
 
   return function startPoll(onComplete) {
     if (getPollId() != null) return;
-    const id = setInterval(async () => {
-      try {
-        const res = await fetch(`${apiUrl}${statusPath}`);
-        const data = await res.json();
-        setJobStatus(data);
-        if (TERMINAL_JOB_STATUSES.has(data.status)) {
-          clearInterval(id);
-          setPollId(null);
-          setProgressOpen(false);
-          setTimeout(() => {
-            reloadFns.forEach((fn) => {
-              fn();
-            });
-          }, reloadDelayMs);
-          if (typeof onComplete === "function") onComplete();
-        }
-      } catch (e) {
-        console.warn(warnMessage, e);
-      }
+    const id = setInterval(() => {
+      void runPipelinePollOnce({
+        apiUrl,
+        statusPath,
+        setJobStatus,
+        warnMessage,
+        intervalId: id,
+        setPollId,
+        setProgressOpen,
+        reloadFns,
+        reloadDelayMs,
+        onComplete,
+      });
     }, intervalMs);
     setPollId(id);
   };

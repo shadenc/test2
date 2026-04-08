@@ -9,7 +9,6 @@ import Typography from "@mui/material/Typography";
 import Papa from "papaparse";
 import IconButton from "@mui/material/IconButton";
 import CircularProgress from "@mui/material/CircularProgress";
-import Alert from "@mui/material/Alert";
 import Tooltip from '@mui/material/Tooltip';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -28,7 +27,6 @@ import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import MenuItem from '@mui/material/MenuItem';
 import EditIcon from '@mui/icons-material/Edit';
 import Add from '@mui/icons-material/Add';
-import LinearProgress from '@mui/material/LinearProgress';
 import Stack from "@mui/material/Stack";
 import { buildDashboardColumns, GRID_EMPTY_AR } from "./dashboardColumns";
 import { mergeCorrectionIntoRows, quarterLabelFromDateString } from "./gridUtils";
@@ -106,11 +104,13 @@ const DATA_GRID_COMPONENTS_PROPS = {
 function pipelineJobStatusLine(jobStatus, labelWithColon) {
   const status = jobStatus?.status ?? "جاري التنفيذ";
   const sym = jobStatus?.current_symbol;
+  const symSuffix = sym ? ` — ${sym}` : "";
   if (labelWithColon) {
-    return `${labelWithColon}: ${status}${sym ? ` — ${sym}` : ""}`;
+    return `${labelWithColon}: ${status}${symSuffix}`;
   }
   const processed = jobStatus?.processed ?? 0;
-  return `الحالة: ${status} — المُنجز: ${processed}${sym ? ` — الحالي: ${sym}` : ""}`;
+  const currentSuffix = sym ? ` — الحالي: ${sym}` : "";
+  return `الحالة: ${status} — المُنجز: ${processed}${currentSuffix}`;
 }
 
 function stopBothJobsButtonSx(stopping) {

@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 
 beforeEach(() => {
-  global.fetch = jest.fn((url) => {
+  globalThis.fetch = jest.fn((url) => {
     const u = String(url);
     if (u.includes("/foreign_ownership_data.json") || u.endsWith(".json")) {
       return Promise.resolve({
