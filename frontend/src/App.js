@@ -39,6 +39,9 @@ import { DrawerListLoadingOrError } from "./DrawerListLoadingOrError";
 import { API_URL } from "./apiBase";
 import { EvidenceModal } from "./EvidenceModal";
 import { CustomExportModal } from "./CustomExportModal";
+import { DrawerSectionHeader } from "./DrawerSectionHeader";
+import { DASHBOARD_DATA_GRID_SX } from "./dashboardDataGridSx";
+import { downloadBlobAsFile, refreshUserExportsSidebar } from "./exportDownloadUtils";
 
 function cleanFlowCsvRow(row) {
   const cleanedRow = {};
@@ -99,20 +102,15 @@ const DATA_GRID_COMPONENTS_PROPS = {
   },
 };
 
-/** Single-line caption for PDF / net job progress modals (no nested JSX ternaries). */
-function jobPipelineProgressCaption(jobStatus) {
+/** Progress line for pipeline modals: optional label prefix, else status + processed + current symbol. */
+function pipelineJobStatusLine(jobStatus, labelWithColon) {
   const status = jobStatus?.status ?? "جاري التنفيذ";
+  const sym = jobStatus?.current_symbol;
+  if (labelWithColon) {
+    return `${labelWithColon}: ${status}${sym ? ` — ${sym}` : ""}`;
+  }
   const processed = jobStatus?.processed ?? 0;
-  const sym = jobStatus?.current_symbol;
-  const suffix = sym ? ` — الحالي: ${sym}` : "";
-  return `الحالة: ${status} — المُنجز: ${processed}${suffix}`;
-}
-
-function combinedPipelineLine(label, jobStatus) {
-  const status = jobStatus?.status ?? "جاري التنفيذ";
-  const sym = jobStatus?.current_symbol;
-  const tail = sym ? ` — ${sym}` : "";
-  return `${label}: ${status}${tail}`;
+  return `الحالة: ${status} — المُنجز: ${processed}${sym ? ` — الحالي: ${sym}` : ""}`;
 }
 
 function stopBothJobsButtonSx(stopping) {
@@ -672,30 +670,15 @@ function App() {
         response.headers.get("content-disposition"),
       );
 
-      // Create blob and download
       const blob = await response.blob();
-      const url = globalThis.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      globalThis.URL.revokeObjectURL(url);
-      a.remove();
-      
-      // Refetch user exports so the new file appears in the sidebar
-      setUserExportsLoading(true);
-      fetch(`${API_URL}/api/user_exports`)
-        .then(res => res.json())
-        .then(data => {
-          setUserExports(data);
-          setUserExportsLoading(false);
-        })
-        .catch((err) => {
-          console.warn("تعذر تحديث قائمة ملفات التصدير بعد التحميل", err);
-          setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
-          setUserExportsLoading(false);
-        });
+      downloadBlobAsFile(blob, filename);
+
+      await refreshUserExportsSidebar(
+        setUserExports,
+        setUserExportsLoading,
+        setUserExportsError,
+        "تعذر تحديث قائمة ملفات التصدير بعد التحميل",
+      );
     } catch (error) {
       console.error('Error exporting to Excel:', error);
       const message = error instanceof Error ? error.message : String(error);
@@ -778,28 +761,14 @@ function App() {
       });
   }, []);
 
-  // Fetch user exports
   useEffect(() => {
-    console.log('🔄 Fetching user exports...');
-    setUserExportsLoading(true);
-    fetch(`${API_URL}/api/user_exports`)
-      .then(res => {
-        console.log('📡 User exports response status:', res.status);
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        return res.json();
-      })
-      .then(data => {
-        console.log('✅ User exports data received:', data);
-        setUserExports(data);
-        setUserExportsLoading(false);
-      })
-      .catch(err => {
-        console.error('❌ Error fetching user exports:', err);
-        setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
-        setUserExportsLoading(false);
-      });
+    console.log("🔄 Fetching user exports...");
+    refreshUserExportsSidebar(
+      setUserExports,
+      setUserExportsLoading,
+      setUserExportsError,
+      "❌ Error fetching user exports:",
+    );
   }, []);
 
   useEffect(() => {
@@ -885,34 +854,18 @@ function App() {
         response.headers.get("content-disposition"),
       );
 
-      // Create blob and download
       const blob = await response.blob();
-      const url = globalThis.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      globalThis.URL.revokeObjectURL(url);
-      a.remove();
-      
-      // Clear the custom inputs after successful export
+      downloadBlobAsFile(blob, filename);
+
       setCustomExportDate("");
       setCustomFileName("");
-      
-      // Refetch user exports so the new file appears in the sidebar
-      setUserExportsLoading(true);
-      fetch(`${API_URL}/api/user_exports`)
-        .then(res => res.json())
-        .then(data => {
-          setUserExports(data);
-          setUserExportsLoading(false);
-        })
-        .catch((err) => {
-          console.warn("تعذر تحديث قائمة التصدير بعد التصدير المخصص", err);
-          setUserExportsError('فشل في تحميل ملفات قام المستخدم بحفظها');
-          setUserExportsLoading(false);
-        });
+
+      await refreshUserExportsSidebar(
+        setUserExports,
+        setUserExportsLoading,
+        setUserExportsError,
+        "تعذر تحديث قائمة التصدير بعد التصدير المخصص",
+      );
         
       // Show enhanced success message
       const successMessage = `✅ تم التصدير بنجاح!\n\n📁 اسم الملف: ${filename}\n📅 التاريخ: ${customExportDate}\n🎯 الربع: ${quarterLabelFromDateString(customExportDate)}\n\nتم حفظ الملف في مجلد التنزيلات`;
@@ -1129,7 +1082,7 @@ function App() {
               }
             >
               <Typography sx={{ fontSize: 13, color: '#1e6641', mt: 1 }}>
-                {jobPipelineProgressCaption(pdfJobStatus)}
+                {pipelineJobStatusLine(pdfJobStatus)}
               </Typography>
             </PipelineProgressModal>
 
@@ -1182,10 +1135,10 @@ function App() {
                 </Typography>
               )}
               <Typography sx={{ fontSize: 13, color: '#1e6641', mt: 1 }}>
-                {combinedPipelineLine("الأرباح المبقاة", pdfJobStatus)}
+                {pipelineJobStatusLine(pdfJobStatus, "الأرباح المبقاة")}
               </Typography>
               <Typography sx={{ fontSize: 13, color: '#ff9800' }}>
-                {combinedPipelineLine("صافي الربح", netJobStatus)}
+                {pipelineJobStatusLine(netJobStatus, "صافي الربح")}
               </Typography>
             </PipelineProgressModal>
             <PipelineProgressModal
@@ -1199,7 +1152,7 @@ function App() {
               }
             >
               <Typography sx={{ fontSize: 13, color: '#ff9800', mt: 1 }}>
-                {jobPipelineProgressCaption(netJobStatus)}
+                {pipelineJobStatusLine(netJobStatus)}
               </Typography>
             </PipelineProgressModal>
           </Box>
@@ -1249,81 +1202,7 @@ function App() {
             componentsProps={DATA_GRID_COMPONENTS_PROPS}
             columnBuffer={1}
             columnThreshold={1}
-            sx={{
-              bgcolor: "white",
-              fontFamily: "'Tajawal', 'Cairo', 'Noto Sans Arabic', sans-serif",
-              direction: "rtl",
-              borderRadius: 4,
-              fontSize: 18,
-              boxShadow: '0 2px 16px 0 rgba(30,102,65,0.08)',
-              border: 'none',
-              "& .MuiDataGrid-columnHeaders": {
-                bgcolor: "#e3ecfa",
-                fontWeight: "bold",
-                fontSize: 18,
-                position: 'sticky',
-                top: 0,
-                zIndex: 1,
-                direction: 'rtl',
-                textAlign: 'right',
-                boxShadow: '0 2px 8px 0 rgba(30,102,65,0.10)',
-                borderTopLeftRadius: 16,
-                borderTopRightRadius: 16,
-              },
-              "& .MuiDataGrid-columnHeader, & .MuiDataGrid-columnHeaderTitle": {
-                direction: "rtl",
-                textAlign: "right",
-                justifyContent: "flex-end",
-                paddingRight: "12px !important",
-                paddingLeft: "0 !important",
-                display: 'flex',
-              },
-              "& .MuiDataGrid-columnHeaderTitleContainer": {
-                flexDirection: "row-reverse",
-                direction: 'rtl',
-                display: 'flex',
-                justifyContent: 'flex-end',
-              },
-              "& .MuiDataGrid-columnHeaderTitleContainerContent": {
-                textAlign: "right",
-                justifyContent: "flex-end",
-                direction: 'rtl',
-                display: 'flex',
-              },
-              "& .MuiDataGrid-row": {
-                minHeight: 44,
-                maxHeight: 44,
-                transition: 'background 0.2s, box-shadow 0.2s',
-                borderRadius: 2,
-              },
-              "& .MuiDataGrid-row:nth-of-type(even)": { bgcolor: "#f7fafc" },
-              "& .MuiDataGrid-row:hover": {
-                bgcolor: "#e3f2fd",
-                boxShadow: '0 2px 8px 0 rgba(30,102,65,0.08)',
-                cursor: 'pointer',
-              },
-              "& .MuiDataGrid-footerContainer": { 
-                bgcolor: '#f4f6fa', 
-                fontWeight: 'bold', 
-                borderBottomLeftRadius: 16, 
-                borderBottomRightRadius: 16 
-              },
-              "& .MuiDataGrid-virtualScroller": { minHeight: 300 },
-              "& .MuiDataGrid-cell": {
-                borderBottom: '1px solid #e0e0e0',
-                fontWeight: 500,
-                fontSize: 17,
-                letterSpacing: '0.01em',
-                direction: 'rtl',
-                textAlign: 'right',
-              },
-              "& .MuiDataGrid-cell:focus, & .MuiDataGrid-columnHeader:focus": {
-                outline: 'none',
-              },
-              "& .MuiDataGrid-root": {
-                borderRadius: 4,
-              },
-            }}
+            sx={DASHBOARD_DATA_GRID_SX}
           />
         </Box>
       </Paper>
@@ -1406,36 +1285,7 @@ function App() {
         {/* Soft divider and extra space below header */}
         <Box sx={{ height: 18 }} />
         <Box sx={{ width: '100%', height: 2, bgcolor: '#f4f6fa', mb: 2, borderRadius: 2 }} />
-        {/* User-Saved Exports Section */}
-        <Box sx={{ mt: 2, pb: 0, px: 0 }}>
-          <Box sx={{
-            display: 'flex',
-            alignItems: 'center',
-            bgcolor: '#e9f5ee',
-            borderRadius: 4,
-            px: 2,
-            py: 1.2,
-            width: '100%',
-            boxSizing: 'border-box',
-            mb: 1.5,
-            gap: 1.5,
-          }}>
-            <Box sx={{ width: 3, height: 24, bgcolor: '#1e6641', borderRadius: 6, mr: 0 }} />
-            <Typography
-              variant="subtitle1"
-              sx={{
-                fontWeight: 700,
-                color: '#1e6641',
-                fontSize: 18,
-                letterSpacing: 0.1,
-                minWidth: 0,
-                pr: 1,
-              }}
-            >
-              ملفاتك المصدّرة
-            </Typography>
-          </Box>
-        </Box>
+        <DrawerSectionHeader title="ملفاتك المصدّرة" />
         <List>
           <UserExportsDrawerList
             loading={userExportsLoading}
@@ -1445,36 +1295,7 @@ function App() {
             apiUrl={API_URL}
           />
         </List>
-        {/* Divider between sections */}
-        <Box sx={{ mt: 2, pb: 0, px: 0 }}>
-          <Box sx={{
-            display: 'flex',
-            alignItems: 'center',
-            bgcolor: '#e9f5ee',
-            borderRadius: 4,
-            px: 2,
-            py: 1.2,
-            width: '100%',
-            boxSizing: 'border-box',
-            mb: 1.5,
-            gap: 1.5,
-          }}>
-            <Box sx={{ width: 3, height: 24, bgcolor: '#1e6641', borderRadius: 6, mr: 0 }} />
-            <Typography
-              variant="subtitle1"
-              sx={{
-                fontWeight: 700,
-                color: '#1e6641',
-                fontSize: 18,
-                letterSpacing: 0.1,
-                minWidth: 0,
-                pr: 1,
-              }}
-            >
-              أرشيف الفترات الربعية
-            </Typography>
-          </Box>
-        </Box>
+        <DrawerSectionHeader title="أرشيف الفترات الربعية" />
         
         {/* Custom Export Section - Right next to Quarterly Archives */}
         <Box sx={{ px: 2, mb: 2 }}>
